@@ -9,7 +9,7 @@ export const DAMAGE_FX = [
   ['cameraNormal', 'Camera Kick · Normal'],
   ['cameraHeavy', 'Camera Shake · Heavy'],
   ['hitstop', 'Hitstop · 80 ms'],
-  ['audio', 'Impact Grunt'],
+  ['audio', 'Zelda Hit'],
   ['skid', 'Foot Skid + Dust'],
   ['lowHealth', 'Low-health Pulse'],
   ['shatter', 'Ember Shatter'],
@@ -43,13 +43,27 @@ const css = `
   background:radial-gradient(circle,transparent 42%,rgba(105,0,13,.8) 100%); }
 `
 
-let panel, inkLayer, shatterLayer, lowHealthLayer, open = false, scene, player, audioContext
-let flashTime = 0, recoilTime = 0, knockTime = 0, skidTime = 0, inkTime = 0, shatterTime = 0, lowHealthTime = 0, recoilBase
+let panel, inkLayer, shatterLayer, lowHealthLayer, open = false, scene, player
+let flashTime = 0, recoilTime = 0, knockTime = 0, skidTime = 0, inkTime = 0, shatterTime = 0, lowHealthTime = 0, lowHealthPhase = 0, recoilBase
 const knockDirection = new THREE.Vector3()
 const flashMaterials = new Map()
 const sparks = [], dusts = [], waves = [], ghosts = [], smashes = []
 const sparkGeo = new THREE.OctahedronGeometry(0.065, 0)
 const waveGeo = new THREE.RingGeometry(0.72, 0.9, 48)
+const damageSoundUrls = {
+  hit: '/assets/audio/zelda-hit.mp3',
+  kill: '/assets/audio/zelda-kill.mp3',
+  lifeLost: '/assets/audio/zelda-life-lost.mp3',
+  bossDefeated: '/assets/audio/zelda-ganon-defeated.mp3',
+}
+const damageSounds = {}
+
+if (typeof Audio !== 'undefined') for (const [name, url] of Object.entries(damageSoundUrls)) {
+  const sound = new Audio(url)
+  sound.preload = 'auto'
+  sound.volume = 0.55
+  damageSounds[name] = sound
+}
 
 export function createDamageDebugUI(world, hero) {
   scene = world
@@ -73,8 +87,6 @@ export function createDamageDebugUI(world, hero) {
   lowHealthLayer = document.createElement('div')
   lowHealthLayer.id = 'damage-low-health'
   document.body.append(inkLayer, shatterLayer, lowHealthLayer)
-  addEventListener('pointerdown', ensureImpactAudio, { once: true })
-  addEventListener('keydown', ensureImpactAudio, { once: true })
 }
 
 export function toggleDamageDebug() {
@@ -125,59 +137,27 @@ function startRecoil() {
   recoilTime = 0.28
 }
 
-function spawnSparks(count = 6, color = 0xff8b3d) {
+function spawnSparks(count = 6, color = 0xff8b3d, position = player.group.position) {
   for (let i = 0; i < count; i++) {
     const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1 })
     const mesh = new THREE.Mesh(sparkGeo, material)
-    mesh.position.copy(player.group.position).add(new THREE.Vector3((Math.random() - 0.5) * 0.5, 0.65 + Math.random() * 0.7, (Math.random() - 0.5) * 0.5))
+    mesh.position.copy(position).add(new THREE.Vector3((Math.random() - 0.5) * 0.5, 0.65 + Math.random() * 0.7, (Math.random() - 0.5) * 0.5))
     scene.add(mesh)
     sparks.push({ mesh, velocity: new THREE.Vector3((Math.random() - 0.5) * 4, 2.5 + Math.random() * 3, (Math.random() - 0.5) * 4), life: 0.55 })
   }
 }
 
-function playImpactGrunt() {
-  const ctx = ensureImpactAudio()
-  if (!ctx) return
-  const now = ctx.currentTime
-  const voice = ctx.createOscillator()
-  const body = ctx.createOscillator()
-  const throat = ctx.createBiquadFilter()
-  const mouth = ctx.createBiquadFilter()
-  const voiceGain = ctx.createGain()
-  const bodyGain = ctx.createGain()
-  voice.type = 'sawtooth'
-  voice.frequency.setValueAtTime(125, now)
-  voice.frequency.exponentialRampToValueAtTime(68, now + 0.28)
-  body.type = 'triangle'
-  body.frequency.setValueAtTime(63, now)
-  body.frequency.exponentialRampToValueAtTime(42, now + 0.24)
-  throat.type = mouth.type = 'peaking'
-  throat.frequency.value = 340
-  throat.Q.value = 2.2
-  throat.gain.value = 14
-  mouth.frequency.value = 820
-  mouth.Q.value = 3
-  mouth.gain.value = 8
-  voiceGain.gain.setValueAtTime(0.001, now)
-  voiceGain.gain.exponentialRampToValueAtTime(0.14, now + 0.018)
-  voiceGain.gain.exponentialRampToValueAtTime(0.001, now + 0.3)
-  bodyGain.gain.setValueAtTime(0.055, now)
-  bodyGain.gain.exponentialRampToValueAtTime(0.001, now + 0.24)
-  voice.connect(throat).connect(mouth).connect(voiceGain).connect(ctx.destination)
-  body.connect(bodyGain).connect(ctx.destination)
-  voice.start(now)
-  body.start(now)
-  voice.stop(now + 0.3)
-  body.stop(now + 0.24)
+function playDamageSound(name, onDone) {
+  const sound = damageSounds[name]
+  if (!sound) return onDone?.()
+  sound.currentTime = 0
+  sound.onended = onDone ?? null
+  sound.play().catch(() => onDone?.())
 }
 
-function ensureImpactAudio() {
-  const Audio = globalThis.AudioContext || globalThis.webkitAudioContext
-  if (!Audio) return
-  const ctx = audioContext ||= new Audio()
-  ctx.resume().catch(() => {})
-  return ctx
-}
+const enemyDamageSound = (enemy, killed) => killed ? enemy.type === 'boss' ? null : 'kill' : 'hit'
+const enemyUsesSpirit = (enemy) => enemy.type === 'boss'
+const isLowHealth = (hp, hpMax) => hp > 0 && hp <= hpMax * 0.2
 
 function impactDirection(target, source, fallback) {
   const direction = source ? target.clone().sub(source) : fallback.clone()
@@ -288,7 +268,7 @@ export function triggerDamageFx(name) {
   else if (name === 'cameraNormal') player.shake = Math.max(player.shake, 0.18)
   else if (name === 'cameraHeavy') player.shake = Math.max(player.shake, 0.55)
   else if (name === 'hitstop') player.hitstop = Math.max(player.hitstop, 0.08)
-  else if (name === 'audio') playImpactGrunt()
+  else if (name === 'audio') playDamageSound('hit')
   else if (name === 'skid') {
     setHeroImpactDirection()
     skidTime = 0.32
@@ -305,26 +285,38 @@ export function triggerDamageFx(name) {
   else if (name === 'ground') spawnGroundSmash()
 }
 
-export function triggerHeroDamageFx(fromPosition) {
+export function triggerHeroDamageFx(fromPosition, heavy = false) {
   setHeroImpactDirection(fromPosition)
   startFlash()
   startRecoil()
   knockTime = 0.18
-  playImpactGrunt()
-  skidTime = 0.32
-  spawnSkidDust()
+  playDamageSound('hit')
+  if (heavy) {
+    skidTime = 0.32
+    spawnSkidDust()
+    player.shake = Math.max(player.shake, 0.35)
+  }
 }
 
-export function triggerEnemyDamageFx(enemy, fromPosition) {
-  const direction = impactDirection(enemy.group.position, fromPosition, new THREE.Vector3(0, 0, 1))
+export function triggerEnemyDamageFx(enemy, fromPosition, killed = false) {
   startFlash(0.1, enemy.group)
   enemy.recoilTime = 0.24
-  playImpactGrunt()
-  spawnSkidDust(enemy.group, direction)
-  spawnEnemySpirit(enemy, direction)
+  player.hitstop = Math.max(player.hitstop, 0.06)
+  const sound = enemyDamageSound(enemy, killed)
+  if (sound) playDamageSound(sound)
+  spawnSparks(6, 0xff8b3d, enemy.group.position)
+  if (enemyUsesSpirit(enemy)) spawnEnemySpirit(enemy, impactDirection(enemy.group.position, fromPosition, new THREE.Vector3(0, 0, 1)))
 }
 
-export function updateDamageDebug(dt) {
+export function triggerHeroDeathFx(onDone) {
+  playDamageSound('lifeLost', onDone)
+}
+
+export function triggerAshKnightDeathFx(onDone) {
+  playDamageSound('bossDefeated', onDone)
+}
+
+export function updateDamageDebug(dt, hp = Infinity, hpMax = 1) {
   if (flashTime > 0) {
     flashTime -= dt
     paintFlash()
@@ -364,8 +356,10 @@ export function updateDamageDebug(dt) {
   shatterTime = Math.max(0, shatterTime - dt)
   shatterLayer.style.opacity = String(Math.sin((shatterTime / 0.55) * Math.PI) * 0.9)
   lowHealthTime = Math.max(0, lowHealthTime - dt)
-  const lowHealthFade = Math.min(1, lowHealthTime / 0.35)
-  const lowHealthPulse = Math.max(0, Math.sin((1.8 - lowHealthTime) * Math.PI * 3)) ** 2
+  const critical = isLowHealth(hp, hpMax)
+  lowHealthPhase = critical ? lowHealthPhase + dt : 0
+  const lowHealthFade = critical ? 1 : Math.min(1, lowHealthTime / 0.35)
+  const lowHealthPulse = Math.max(0, Math.sin((critical ? lowHealthPhase : 1.8 - lowHealthTime) * Math.PI * 3)) ** 2
   lowHealthLayer.style.opacity = String((0.16 + lowHealthPulse * 0.58) * lowHealthFade)
   lowHealthLayer.style.transform = `scale(${1.02 - lowHealthPulse * 0.02})`
 
@@ -438,5 +432,9 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   if (DAMAGE_FX.length !== 14 || !['flash', 'recoil', 'knockback', 'sparks', 'cameraNormal', 'cameraHeavy', 'hitstop', 'audio', 'skid', 'lowHealth', 'shatter', 'ink', 'spirit', 'ground'].every((id) => ids.has(id))) throw new Error('Damage FX menu must expose every requested effect')
   if (selectedDamageFx([{ value: 'flash', checked: true }, { value: 'ink', checked: false }]).join() !== 'flash') throw new Error('Combined trigger must include only checked effects')
   if (impactDirection(new THREE.Vector3(2, 0, 0), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, -1)).x !== 1) throw new Error('Damage direction must point away from the hit source')
+  if (!damageSoundUrls.hit.endsWith('zelda-hit.mp3') || !damageSoundUrls.kill.endsWith('zelda-kill.mp3') || !damageSoundUrls.lifeLost.endsWith('zelda-life-lost.mp3') || !damageSoundUrls.bossDefeated.endsWith('zelda-ganon-defeated.mp3')) throw new Error('Hit, enemy kill, hero death, and boss defeat sounds must stay distinct')
+  if (enemyDamageSound({ type: 'slime' }, false) !== 'hit' || enemyDamageSound({ type: 'slime' }, true) !== 'kill' || enemyDamageSound({ type: 'boss' }, true) !== null) throw new Error('The Kill sound must exclude Ash Knight')
+  if (!enemyUsesSpirit({ type: 'boss' }) || enemyUsesSpirit({ type: 'slime' })) throw new Error('Spirit Displacement must be exclusive to the Ash Knight')
+  if (!isLowHealth(20, 100) || isLowHealth(21, 100) || isLowHealth(0, 100)) throw new Error('Low-health pulse must cover living heroes at 20% HP or lower')
   console.log('Damage FX check passed: individual triggers and checked-only combined selection.')
 }

@@ -12,6 +12,24 @@ const css = `
 `
 
 const CHARS_PER_SEC = 40
+const dialogueSound = typeof Audio === 'undefined' ? null : new Audio('/assets/audio/dialogue-voice.mp3')
+if (dialogueSound) {
+  dialogueSound.preload = 'auto'
+  dialogueSound.volume = 0.18
+  dialogueSound.loop = true
+}
+
+function startDialogueSound() {
+  if (!dialogueSound) return
+  dialogueSound.currentTime = 0
+  dialogueSound.play().catch(() => {})
+}
+
+function stopDialogueSound() {
+  if (!dialogueSound) return
+  dialogueSound.pause()
+  dialogueSound.currentTime = 0
+}
 
 let box, nameEl, textEl
 let queue = []
@@ -42,6 +60,7 @@ export function say(lines, onComplete) {
 }
 
 function next() {
+  stopDialogueSound()
   const finished = current
   current = queue.shift() ?? null
   if (!current) {
@@ -53,6 +72,7 @@ function next() {
     nameEl.style.display = current.name ? 'block' : 'none'
     textEl.className = current.name ? 'text' : 'text mono'
     textEl.textContent = ''
+    if (current.text.length) startDialogueSound()
   }
   finished?.onComplete?.()
 }
@@ -67,6 +87,7 @@ export function advanceDialogue(revealOnly = false) {
   if (revealed < current.text.length) {
     revealed = current.text.length
     textEl.textContent = current.text
+    stopDialogueSound()
   }
   else if (!revealOnly) next()
 }
@@ -76,11 +97,13 @@ export function updateDialogue(dt) {
   if (revealed < current.text.length) {
     revealed = Math.min(current.text.length, revealed + CHARS_PER_SEC * dt)
     textEl.textContent = current.text.slice(0, Math.floor(revealed))
+    if (revealed === current.text.length) stopDialogueSound()
   }
 }
 
 // Small runnable input check: `node src/dialogue.js`
 if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv[1]}`) {
+  if (dialogueSound !== null) throw new Error('Node dialogue check must not create browser audio')
   current = { text: 'Finish this sentence.' }
   textEl = { textContent: '' }
   revealed = 3

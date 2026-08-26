@@ -1,6 +1,6 @@
 # Game Week — Spec
 
-**Deadline:** Thursday at midnight. **Demo:** playable in under 5 minutes. **Judging:** staff + student votes.
+**Deadline:** Thursday 2026-08-27 at 9:00 PM. **Demo:** playable in under 5 minutes. **Judging:** staff + student votes.
 
 ## Locked decisions
 
@@ -25,10 +25,10 @@
 - Enemy hits 10–35, boss ~40 (tune in playtest)
 - Enemy progression: Slime (100 HP) teaches basic pressure; forest Thornback (140 HP) telegraphs a 20-damage line charge; ruins Drowned Sentinel (180 HP) telegraphs a 28-damage radial slam and long recovery.
 - Praying at a hearth shrine resets living and defeated roaming enemies to full health at their original spawns. The four Q1 well slimes never respawn.
-- Death: respawn at last shrine, world state kept
-- Audio: procedural WebAudio — ambient music per region + SFX (no audio files)
+- Death: wobble and fall while Life Lost plays, then respawn at the last shrine with world state kept
+- Audio: procedural WebAudio for ambience and most SFX; Zelda Hit/Kill/Life Lost damage cues are sampled audio
 - Save: localStorage
-- Title screen with New Game + chapter select (preset saves) so the demo can jump to any quest, including the boss
+- Title screen with New Game, Continue, four quest presets, and a direct Ash Knight preset
 
 ## Decisions added during build (ad-hoc)
 
@@ -88,7 +88,7 @@
 ## Award targets
 
 - Visuals: cohesive low-poly flat-color look, fog, simple bloom/lighting
-- Technical: 3D, seamless world, procedural audio, save system, all in one file
+- Technical: 3D seamless world, sampled/procedural audio, localStorage save system, standard multi-file Vite build
 - Creative/Fun: Tunic-style secrets + inner-monologue storytelling
 
 ## Optional post-deadline expansion

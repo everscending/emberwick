@@ -4,11 +4,13 @@ import { stats, hurtPlayer, inAttackArc } from './player.js'
 import { onEnemyKilled, questState } from './quests.js'
 import { resolveCircle } from './collision.js'
 import { groundHeight } from './ground.js'
-import { triggerEnemyDamageFx } from './debugfx.js'
+import { triggerAshKnightDeathFx, triggerEnemyDamageFx } from './debugfx.js'
 
 const AGGRO_RANGE = 12
 const CONTACT_RANGE = 1.0
 const CONTACT_DAMAGE = 10
+const BOSS_DEATH_FALL_START = 0.9
+const BOSS_DEATH_FALL_END = 1.8
 
 const enemies = []
 const spawnPoints = []
@@ -565,7 +567,7 @@ function updateBoss(e, player, dt) {
       e.slamRing.visible = false
       e.mat.emissive.setHex(0x000000)
     }
-  } else if (e.state === 'recover' && e.stateTime >= 0.8) {
+  } else if (e.state === 'recover' && e.stateTime >= 1.25) {
     e.state = 'idle'
     e.stateTime = 0
     e.cooldown = 0.45
@@ -579,6 +581,15 @@ function updateBoss(e, player, dt) {
   }
   const contact = e.group.position.distanceTo(ppos)
   if (contact < 1.25 && contact > 0.01) ppos.addScaledVector(ppos.clone().sub(e.group.position).setY(0).normalize(), (1.25 - contact) * 0.5)
+}
+
+function bossDeathPoseAt(time) {
+  const fall = THREE.MathUtils.smoothstep(time, BOSS_DEATH_FALL_START, BOSS_DEATH_FALL_END)
+  return {
+    fall,
+    tilt: Math.sin(time * 18) * 0.13 * (1 - fall) + fall * Math.PI / 2,
+    done: time >= BOSS_DEATH_FALL_END,
+  }
 }
 
 function updateThornback(e, player, dt) {
@@ -743,7 +754,16 @@ export function updateEnemies(scene, player, dt) {
     const e = enemies[i]
 
     if (e.dying) {
-      if (e.type !== 'boss') {
+      if (e.type === 'boss') {
+        e.dieTime += dt
+        const pose = bossDeathPoseAt(e.dieTime)
+        e.group.rotation.z = pose.tilt
+        e.group.position.y = groundHeight(e.group.position.x, e.group.position.z) + pose.fall * 0.9
+        e.swordPivot.rotation.x = pose.fall * 0.7
+        e.slamRing.visible = false
+        if (!pose.done || !e.deathSoundDone) continue
+        e.onDefeat?.()
+      } else {
         const shades = e.type === 'warden'
           ? [0x3a3a48, 0x2a2a35, 0x55505e]
           : e.type === 'thornback'
@@ -761,8 +781,6 @@ export function updateEnemies(scene, player, dt) {
     // take sword hit
     if (player.attackActive && !player.hitThisSwing.has(e.id) && inAttackArc(player, e.group.position)) {
       player.hitThisSwing.add(e.id)
-      player.hitstop = 0.06 // brief freeze sells the impact
-      player.shake = player.attackMult > 1 ? 0.3 : 0.16
       applyHit(e, stats.damage * player.attackMult, ppos, player.attackMult > 1 ? 14 : 8)
       if (e.dying) continue
     }
@@ -921,20 +939,24 @@ function showHpBar(e) {
 
 function applyHit(e, damage, fromPos, kb) {
   e.hp -= damage
+  const killed = e.hp <= 0 && !e.dying
   showHpBar(e)
   drawBar(e)
   e.flashTimer = 0.12
   e.pop = 1
   const resistance = e.type === 'boss' ? 0.12 : e.type === 'warden' ? 0.25 : e.type === 'sentinel' ? 0.35 : e.type === 'thornback' ? 0.7 : 1
   e.knockback.copy(e.group.position).sub(fromPos).setY(0).normalize().multiplyScalar(kb * resistance)
-  triggerEnemyDamageFx(e, fromPos)
-  if (e.hp <= 0 && !e.dying) {
+  triggerEnemyDamageFx(e, fromPos, killed)
+  if (killed) {
     e.dying = true
     e.dieTime = 0
     if (e.spawn) e.spawn.alive = false
     onEnemyKilled(e.spawn?.questTarget ? 'slime' : e.type === 'slime' ? 'roamingSlime' : e.type ?? 'slime')
     if (e.type === 'warden' && wardenDeathHandler) wardenDeathHandler(e.group.position.clone())
-    e.onDefeat?.()
+    if (e.type === 'boss') {
+      e.deathSoundDone = false
+      triggerAshKnightDeathFx(() => { e.deathSoundDone = true })
+    } else e.onDefeat?.()
   }
 }
 
@@ -952,6 +974,28 @@ export function damageEnemiesAt(pos, radius, damage) {
 
 export function enemyCount() {
   return enemies.length
+}
+
+export function restoreEnemyProgress() {
+  let defeatedQuestSlimes = Math.min(questState.slimesKilled, 4)
+  for (let i = enemies.length - 1; i >= 0 && defeatedQuestSlimes > 0; i--) {
+    const enemy = enemies[i]
+    if (!enemy.spawn?.questTarget) continue
+    enemy.spawn.alive = false
+    enemy.spawn.scene.remove(enemy.group)
+    enemies.splice(i, 1)
+    defeatedQuestSlimes--
+  }
+}
+
+export function bossSnapshot() {
+  const boss = enemies.find((enemy) => enemy.type === 'boss')
+  return boss ? { hp: Math.max(1, Math.ceil(boss.hp)) } : null
+}
+
+export function restoreBoss(saved) {
+  const boss = enemies.find((enemy) => enemy.type === 'boss')
+  if (boss && Number.isFinite(saved?.hp)) boss.hp = THREE.MathUtils.clamp(saved.hp, 1, boss.maxHp)
 }
 
 export function enemyReturnsAtShrine(spawn, shrinePos) {
@@ -979,6 +1023,9 @@ export function respawnEnemies(shrinePos) {
 if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv[1]}`) {
   const sequence = [0, 1, 2, 3].map(bossAttackForIndex)
   if (sequence.join(',') !== 'slashWindup,chargeWindup,slamWindup,slashWindup') throw new Error('Ash Knight must cycle through all three readable attacks')
+  const wobble = bossDeathPoseAt(0.25)
+  const fallen = bossDeathPoseAt(BOSS_DEATH_FALL_END)
+  if (wobble.done || Math.abs(wobble.tilt) < 0.02 || !fallen.done || Math.abs(fallen.tilt - Math.PI / 2) > 0.001) throw new Error('Ash Knight death must wobble before collapsing')
   const shrine = { x: 0, z: 0 }
   if (enemyReturnsAtShrine({ x: 20, z: 0, respawn: false }, shrine) || !enemyReturnsAtShrine({ x: 20, z: 0, respawn: true }, shrine)) throw new Error('Quest enemies must stay dead while distant roaming enemies return')
   const scene = { add() {}, remove() {} }
@@ -1010,5 +1057,15 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   sentinel.stateTime = 0.44
   updateSentinel(sentinel, nearbyPlayer, 0.01)
   if (sentinel.state !== 'windup' || !sentinel.slamRing.visible || Math.abs(sentinel.arms[0].arm.rotation.z) < 1) throw new Error('Drowned Sentinel must raise its arms inside a visible layered slam telegraph')
+  const bossScene = new THREE.Scene()
+  spawnAshKnight(bossScene, 8, -87)
+  const boss = enemies.at(-1)
+  questState.q4 = 1
+  boss.state = 'recover'
+  boss.stateTime = 1.2
+  updateBoss(boss, { group: { position: new THREE.Vector3(15, 0, -87) } }, 0.04)
+  if (boss.state !== 'recover') throw new Error('Ash Knight recovery must remain punishable for 1.25 seconds')
+  updateBoss(boss, { group: { position: new THREE.Vector3(15, 0, -87) } }, 0.02)
+  if (boss.state !== 'idle') throw new Error('Ash Knight must resume attacking after its recovery window')
   console.log('Enemy check passed: boss cycle, respawns, Thornback gait, and articulated Sentinel locomotion/effects.')
 }

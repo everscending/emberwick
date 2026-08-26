@@ -4,7 +4,7 @@ import { toonRim as toon } from './materials.js'
 import { resolveCircle } from './collision.js'
 import { walkableHeight, applySlopeBlock, settleBridgeLanding } from './ground.js'
 import { LEVEL_XP, levelForXP } from './progression.js'
-import { triggerHeroDamageFx } from './debugfx.js'
+import { triggerHeroDamageFx, triggerHeroDeathFx } from './debugfx.js'
 
 export const stats = {
   hpMax: 100,
@@ -26,7 +26,30 @@ const HIGH_JUMP = { cost: 35, time: 0.58, speed: 12.5 }
 const ATTACK = { time: 0.42, activeFrom: 0.12, activeTo: 0.27, range: 2.3, arc: Math.PI / 1.6 } // active window = strike phase of the anim
 const CHARGE = { hold: 0.5, cost: 50, time: 0.5, activeFrom: 0.08, activeTo: 0.4, range: 2.6, mult: 2.5 }
 const HURT_INVULN = 0.8
+const DEATH_FALL_END = 1.65
+const isHeavyDamage = (amount) => amount >= 28
 const WORLD_BOUND = 103
+const playerSoundUrls = {
+  sword: '/assets/audio/sword-swing.mp3',
+  flask: '/assets/audio/flask-use.mp3',
+  jump: '/assets/audio/high-jump.mp3',
+}
+const playerSounds = {}
+if (typeof Audio !== 'undefined') for (const [name, url] of Object.entries(playerSoundUrls)) {
+  const sound = new Audio(url)
+  sound.preload = 'auto'
+  sound.volume = name === 'sword' ? 0.45 : name === 'jump' ? 0.5 : 0.6
+  playerSounds[name] = sound
+}
+const startsSwingSound = (played, time, activeFrom) => !played && time >= activeFrom
+
+function playPlayerSound(name, playbackRate = 1) {
+  const sound = playerSounds[name]
+  if (!sound) return
+  sound.currentTime = 0
+  sound.playbackRate = playbackRate
+  sound.play().catch(() => {})
+}
 
 // resting carry: blade angled up, drifting partway across the torso
 const SWORD_REST = new THREE.Euler(-0.35, 0.42, 0)
@@ -253,7 +276,7 @@ export function createPlayer(scene) {
     tailSegs,
     feet,
     idleTime: 0,
-    state: 'move', // move | highJump | attack
+    state: 'move', // move | highJump | attack | charging | chargeAttack | dead
     stateTime: 0,
     actionDir: new THREE.Vector3(),
     facing: new THREE.Vector3(0, 0, 1),
@@ -262,12 +285,14 @@ export function createPlayer(scene) {
     stamUsedAt: 0,
     walkPhase: 0,
     attackActive: false,
+    swingSoundPlayed: false,
     hitThisSwing: new Set(),
     comboIndex: 0, // 0 = horizontal slash, 1 = overhead chop (Tunic-style alternation)
     lastAttackAt: -10,
     hitstop: 0,
     shake: 0,
     spawnPoint: new THREE.Vector3(0, 0, 0),
+    deathSoundDone: false,
   }
 }
 
@@ -284,21 +309,66 @@ function spendStamina(p, cost) {
 
 export function gainXP(amount) {
   stats.xp = Math.min(stats.xp + amount, LEVEL_XP[2])
+  syncProgression()
+}
+
+export function syncProgression() {
   stats.level = levelForXP(stats.xp)
+  stats.damage = stats.level >= 2 ? 25 : 20
   stats.abilities.charge = stats.level >= 3
 }
 
 export function hurtPlayer(p, amount, fromPosition) {
-  if (p.invulnerable || p.hurtTimer > 0) return
+  if (p.invulnerable || p.hurtTimer > 0 || p.state === 'dead') return
   stats.hp -= amount
   p.hurtTimer = HURT_INVULN
   if (stats.hp <= 0) {
-    // ponytail: instant respawn at spawn point; shrine system replaces this
-    stats.hp = stats.hpMax
-    stats.stam = stats.stamMax
-    stats.flasks = stats.flaskMax
-    p.group.position.copy(p.spawnPoint)
-  } else triggerHeroDamageFx(fromPosition)
+    p.state = 'dead'
+    p.stateTime = 0
+    p.invulnerable = true
+    p.attackActive = false
+    p.swingSoundPlayed = false
+    p.chargeGlow.visible = false
+    p.trailPts.length = 0
+    p.trail.visible = false
+    p.rig.position.set(0, 0, 0)
+    p.rig.rotation.set(0, 0, 0)
+    p.rig.scale.set(1, 1, 1)
+    p.deathSoundDone = false
+    triggerHeroDeathFx(() => { p.deathSoundDone = true })
+  } else triggerHeroDamageFx(fromPosition, isHeavyDamage(amount))
+}
+
+function deathPoseAt(time) {
+  const fall = THREE.MathUtils.smoothstep(time, 0.8, DEATH_FALL_END)
+  return {
+    fall,
+    tilt: Math.sin(time * 20) * 0.13 * (1 - fall) + fall * Math.PI / 2,
+    done: time >= DEATH_FALL_END,
+  }
+}
+
+const deathFinished = (animationDone, soundDone) => animationDone && soundDone
+
+function revivePlayer(p) {
+  stats.hp = stats.hpMax
+  stats.stam = stats.stamMax
+  stats.flasks = stats.flaskMax
+  p.group.position.copy(p.spawnPoint)
+  p.state = 'move'
+  p.stateTime = 0
+  p.invulnerable = false
+  p.hurtTimer = HURT_INVULN
+  p.deathSoundDone = false
+  p.rig.position.set(0, 0, 0)
+  p.rig.rotation.set(0, 0, 0)
+  p.swordArm.rotation.set(-0.15, 0, 0)
+  p.shieldArm.rotation.set(-0.15, 0, 0)
+  p.elbow.rotation.x = -0.5
+  p.sword.rotation.copy(SWORD_REST)
+  p.head.rotation.set(0, 0, 0)
+  p.feet[0].position.set(-0.16, 0.13, 0)
+  p.feet[1].position.set(0.16, 0.13, 0)
 }
 
 // arc test used by enemies when the swing is active; charged spin hits all around
@@ -318,6 +388,16 @@ export function updatePlayer(p, dt) {
   p.stamUsedAt += dt
   p.idleTime += dt
   p.hurtTimer = Math.max(0, p.hurtTimer - dt)
+
+  if (p.state === 'dead') {
+    const pose = deathPoseAt(p.stateTime)
+    p.rig.rotation.z = pose.tilt
+    p.rig.position.y = pose.fall * 0.05
+    p.swordArm.rotation.x = -0.15 + pose.fall * 0.7
+    p.shieldArm.rotation.x = -0.15 - pose.fall * 0.5
+    if (deathFinished(pose.done, p.deathSoundDone)) revivePlayer(p)
+    return
+  }
 
   // idle breathe
   p.body.scale.y = 1 + Math.sin(p.idleTime * 2.5) * 0.02
@@ -366,6 +446,7 @@ export function updatePlayer(p, dt) {
   if (pressed('KeyQ') && stats.flasks > 0 && stats.hp < stats.hpMax) {
     stats.flasks--
     stats.hp = Math.min(stats.hp + 50, stats.hpMax)
+    playPlayerSound('flask')
   }
 
   const move = new THREE.Vector3()
@@ -420,6 +501,7 @@ export function updatePlayer(p, dt) {
       p.actionDir.copy(move.lengthSq() > 0 ? move : p.facing)
       p.targetYaw = Math.atan2(p.actionDir.x, p.actionDir.z) // body aligns into the jump
       p.invulnerable = true
+      playPlayerSound('jump')
     }
   } else if (p.state === 'attack') {
     const t = p.stateTime / ATTACK.time
@@ -498,6 +580,10 @@ export function updatePlayer(p, dt) {
         p.rig.position.y = -0.12 * (1 - e)
       }
     }
+    if (startsSwingSound(p.swingSoundPlayed, p.stateTime, ATTACK.activeFrom)) {
+      p.swingSoundPlayed = true
+      playPlayerSound('sword')
+    }
     p.attackActive = p.stateTime >= ATTACK.activeFrom && p.stateTime <= ATTACK.activeTo
     // short lunge during the strike only — repeated swings shouldn't walk across the map
     if (t >= WINDUP && t < STRIKE) {
@@ -506,6 +592,7 @@ export function updatePlayer(p, dt) {
     }
     if (p.stateTime >= ATTACK.time) {
       p.attackActive = false
+      p.swingSoundPlayed = false
       p.swordArm.rotation.set(-0.15, 0, 0)
       p.elbow.rotation.x = -0.5
       p.sword.rotation.copy(SWORD_REST)
@@ -552,10 +639,15 @@ export function updatePlayer(p, dt) {
     p.swordArm.rotation.y = 0
     p.elbow.rotation.x = -0.2
     alignBladeHorizontal(p, t > 0.8 ? (t - 0.8) / 0.2 : 0)
+    if (startsSwingSound(p.swingSoundPlayed, p.stateTime, CHARGE.activeFrom)) {
+      p.swingSoundPlayed = true
+      playPlayerSound('sword', 0.82)
+    }
     p.attackActive = p.stateTime >= CHARGE.activeFrom && p.stateTime <= CHARGE.activeTo
     if (p.stateTime >= CHARGE.time) {
       p.state = 'move'
       p.attackActive = false
+      p.swingSoundPlayed = false
       p.attackMult = 1
       p.swordArm.rotation.set(-0.15, 0, 0)
       p.elbow.rotation.x = -0.5
@@ -711,4 +803,20 @@ function updateTrail(p, dt) {
   })
   p.trail.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3))
   p.trail.geometry.setAttribute('color', new THREE.BufferAttribute(col, 3))
+}
+
+// Small runnable death-timing check: `node src/player.js`
+if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv[1]}`) {
+  const wobble = deathPoseAt(0.25)
+  const fallen = deathPoseAt(DEATH_FALL_END)
+  if (wobble.fall !== 0 || Math.abs(wobble.tilt) < 0.05) throw new Error('Hero must wobble before falling')
+  if (!fallen.done || Math.abs(fallen.tilt - Math.PI / 2) > 0.001) throw new Error('Hero must finish on the ground')
+  if (deathFinished(true, false) || deathFinished(false, true) || !deathFinished(true, true)) throw new Error('Revival must wait for animation and sound')
+  if (isHeavyDamage(20) || !isHeavyDamage(28)) throw new Error('Only 28+ damage may add heavy-hit skid and camera feedback')
+  if (!startsSwingSound(false, ATTACK.activeFrom, ATTACK.activeFrom) || startsSwingSound(true, ATTACK.activeFrom, ATTACK.activeFrom)) throw new Error('Sword sound must start once at the active strike frame')
+  if (!playerSoundUrls.sword.endsWith('sword-swing.mp3') || !playerSoundUrls.flask.endsWith('flask-use.mp3') || !playerSoundUrls.jump.endsWith('high-jump.mp3')) throw new Error('Player action sounds must use the selected files')
+  stats.xp = 150
+  syncProgression()
+  if (stats.level !== 2 || stats.damage !== 25) throw new Error('Level 2 must raise sword damage to 25')
+  console.log('Player death check passed: wobble, fall, and sound-gated shrine revival.')
 }

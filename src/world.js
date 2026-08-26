@@ -115,6 +115,52 @@ export function createShrine(scene, x, z, player) {
 // ambient drift: pollen in the meadows, leaves in the forest, ash on the plateau
 const ambient = []
 const ambientColor = new THREE.Color()
+const AMBIENT_MOTIF = [0, 3, 7, 5, null, null]
+const REGION_AMBIENCE = {
+  village: { color: 0xffdd99, root: 220, wave: 'sine', step: 0.72, length: 1.1, volume: 0.022 },
+  forest: { color: 0x86b06a, root: 174.61, wave: 'triangle', step: 0.92, length: 1.35, volume: 0.016 },
+  ruins: { color: 0xb8c8d4, root: 146.83, wave: 'sine', step: 1.08, length: 1.7, volume: 0.019 },
+  keep: { color: 0x9a9aa4, root: 110, wave: 'triangle', step: 1.25, length: 1.9, volume: 0.018 },
+}
+const ambientRegionAt = (x, z) => z < -55 ? 'keep' : x < -32 ? 'forest' : x > 38 ? 'ruins' : 'village'
+let musicContext = null
+let musicRegion = null
+let motifStep = 0
+let nextNoteAt = 0
+
+function unlockAmbientMusic() {
+  const AudioContext = window.AudioContext || window.webkitAudioContext
+  if (!AudioContext) return
+  if (!musicContext) musicContext = new AudioContext()
+  if (musicContext.state === 'suspended') musicContext.resume().catch(() => {})
+}
+
+function updateAmbientMusic(region) {
+  if (!musicContext || musicContext.state !== 'running') return
+  const now = musicContext.currentTime
+  if (musicRegion !== region) {
+    musicRegion = region
+    motifStep = 0
+    nextNoteAt = now + 0.12
+  }
+  if (now < nextNoteAt) return
+
+  const config = REGION_AMBIENCE[region]
+  const semitones = AMBIENT_MOTIF[motifStep++ % AMBIENT_MOTIF.length]
+  nextNoteAt = now + config.step
+  if (semitones === null) return
+
+  const oscillator = musicContext.createOscillator()
+  const envelope = musicContext.createGain()
+  oscillator.type = config.wave
+  oscillator.frequency.setValueAtTime(config.root * 2 ** (semitones / 12), now)
+  envelope.gain.setValueAtTime(0.0001, now)
+  envelope.gain.exponentialRampToValueAtTime(config.volume, now + 0.08)
+  envelope.gain.exponentialRampToValueAtTime(0.0001, now + config.length)
+  oscillator.connect(envelope).connect(musicContext.destination)
+  oscillator.start(now)
+  oscillator.stop(now + config.length + 0.05)
+}
 
 export function createAmbient(scene) {
   for (let i = 0; i < 14; i++) {
@@ -125,13 +171,15 @@ export function createAmbient(scene) {
     scene.add(m)
     ambient.push({ mesh: m, seed: Math.random() * 100 })
   }
+  addEventListener('pointerdown', unlockAmbientMusic, { passive: true })
+  addEventListener('keydown', unlockAmbientMusic)
 }
 
 export function updateAmbient(time, px, pz) {
   // one palette per region, chosen by where the player stands
-  const target =
-    -pz > 55 ? 0x9a9aa4 : -px > 32 ? 0x86b06a : px > 38 ? 0xb8c8d4 : 0xffdd99
-  ambientColor.lerp(new THREE.Color(target), 0.02)
+  const region = ambientRegionAt(px, pz)
+  ambientColor.lerp(new THREE.Color(REGION_AMBIENCE[region].color), 0.02)
+  updateAmbientMusic(region)
   // particles live at fixed WORLD positions and wrap into the 36u window
   // around the player — they never translate along with the character
   const wrap = (v, c) => c + ((((v - c + 18) % 36) + 36) % 36) - 18
@@ -167,4 +215,12 @@ export function updateWorld(time) {
     // slow blink
     f.mesh.visible = Math.sin(time * 1.3 + f.seed * 3) > -0.6
   }
+}
+
+// Small runnable region check: `node src/world.js`
+if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv[1]}`) {
+  const regions = [[0, 0], [-40, 0], [40, 0], [0, -56]].map(([x, z]) => ambientRegionAt(x, z))
+  if (regions.join() !== 'village,forest,ruins,keep' || Object.keys(REGION_AMBIENCE).length !== 4) throw new Error('Ambient music must cover exactly four regions')
+  if (AMBIENT_MOTIF.filter(note => note !== null).length !== 4) throw new Error('Ambient motif must keep four notes and its breathing space')
+  console.log('Ambient check passed: one motif, four regional variations.')
 }

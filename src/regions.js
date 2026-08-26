@@ -55,6 +55,35 @@ const HOUSES = [
   { x: -16, z: 12 }, // southwest, woodpile at the side
 ]
 const nearHouse = (x, z) => HOUSES.some((h) => Math.hypot(x - h.x, z - h.z) < 6.5)
+const shortcutCenterX = (z) => -72 - ((z + 18) * 8) / 54
+const nearForestShortcut = (x, z) => z > -15 && z < 34 && Math.abs(x - shortcutCenterX(z)) < 3.2
+let forestShortcut
+let shortcutColliders = []
+
+function buildForestShortcut(scene) {
+  forestShortcut = new THREE.Group()
+  for (const z of [-10, 20]) {
+    const center = shortcutCenterX(z)
+    for (const x of [center - 2, center, center + 2]) {
+      loadModel('nature', 'tree_pineTallA_detailed', 0.02).then((model) => {
+        const tree = model.clone()
+        tree.position.set(x, groundHeight(x, z), z)
+        tree.rotation.y = x + z
+        tree.scale.setScalar(2.25)
+        forestShortcut.add(tree)
+      })
+      shortcutColliders.push(addCollider(x, z, 0.9))
+    }
+  }
+  scene.add(forestShortcut)
+}
+
+export function openForestShortcut() {
+  if (!forestShortcut?.visible) return
+  forestShortcut.visible = false
+  shortcutColliders.forEach(({ remove }) => remove())
+  shortcutColliders = []
+}
 
 export function buildWorld(scene) {
   seedWorld(20260827) // fixed seed: the world is identical on every load
@@ -76,7 +105,7 @@ export function buildWorld(scene) {
     const x = rng(-100, -28)
     const z = rng(-48, 55)
     if (Math.abs(z) < 5 && x > -55) continue // western mouth stays open
-    if (inClearing(x, z)) continue
+    if (inClearing(x, z) || nearForestShortcut(x, z)) continue
     ;(wrand() < 0.6 ? pineTall : pineRound).push({ x, z, scale: rng(1.7, 2.6), rot: rng(0, 6.28) })
   }
   // border + interior walls (tight rows, gaps preserved)
@@ -86,11 +115,11 @@ export function buildWorld(scene) {
     pineRound.push({ x: -33.5 + rng(-0.8, 0.8), z: z + 1.0 + rng(-0.6, 0.6), scale: rng(2.0, 2.5), rot: rng(0, 6.28) })
   }
   for (let x = -96; x < -44; x += 2.0) {
-    if (x > -56 && x < -48) continue
+    if ((x > -56 && x < -48) || nearForestShortcut(x, 20)) continue
     pineTall.push({ x: x + rng(-0.7, 0.7), z: 20 + rng(-0.8, 0.8), scale: rng(2.0, 2.6), rot: rng(0, 6.28) })
   }
   for (let x = -88; x < -34; x += 2.0) {
-    if (x < -84) continue
+    if (x < -84 || nearForestShortcut(x, -10)) continue
     pineRound.push({ x: x + rng(-0.7, 0.7), z: -10 + rng(-0.8, 0.8), scale: rng(2.0, 2.6), rot: rng(0, 6.28) })
   }
   // village + meadows: friendly rounded trees, autumn accents
@@ -118,6 +147,7 @@ export function buildWorld(scene) {
   scatter(scene, 'nature', 'tree_default_fall', fallAccents, { collider: 0.4, wind: 0.02 })
   scatter(scene, 'nature', 'tree_pineSmallB', northwestPines, { collider: 0.35, wind: 0.02 })
   plantForest(scene, deadTrees)
+  buildForestShortcut(scene)
 
   // ---------- ground cover ----------
   plantGrass(scene, 500, 100, 2)
@@ -159,12 +189,16 @@ export function buildWorld(scene) {
   // stumps and fallen logs
   const stumps = []
   const logs = []
-  for (let i = 0; i < 14; i++) stumps.push({ x: rng(-95, -35), z: rng(-45, 50), scale: rng(1.6, 2.2), rot: rng(0, 6.28) })
-  for (let i = 0; i < 12; i++) {
+  while (stumps.length < 14) {
+    const x = rng(-95, -35)
+    const z = rng(-45, 50)
+    if (!nearForestShortcut(x, z)) stumps.push({ x, z, scale: rng(1.6, 2.2), rot: rng(0, 6.28) })
+  }
+  while (logs.length < 12) {
     const inForest = wrand() < 0.6
     const lx = inForest ? rng(-95, -38) : rng(-25, 40)
     const lz = inForest ? rng(-45, 50) : rng(25, 95)
-    if (!nearRoad(lx, lz)) logs.push({ x: lx, z: lz, scale: rng(1.8, 2.4), rot: rng(0, 6.28) })
+    if (!nearRoad(lx, lz) && !nearForestShortcut(lx, lz)) logs.push({ x: lx, z: lz, scale: rng(1.8, 2.4), rot: rng(0, 6.28) })
   }
   scatter(scene, 'nature', 'stump_roundDetailed', stumps, { collider: 0.35 })
   scatter(scene, 'nature', 'log_large', logs, { collider: 0.5 })
@@ -174,7 +208,7 @@ export function buildWorld(scene) {
   for (let i = 0; i < 60; i++) {
     const x = rng(-95, 95)
     const z = rng(-50, 95)
-    if (Math.hypot(x, z) < 6 || nearStream(x, z) || nearHouse(x, z) || nearRoad(x, z)) continue
+    if (Math.hypot(x, z) < 6 || nearStream(x, z) || nearHouse(x, z) || nearRoad(x, z) || nearForestShortcut(x, z)) continue
     bushes.push({ x, z, scale: rng(1.4, 2.4), rot: rng(0, 6.28) })
   }
   scatter(scene, 'nature', 'plant_bushDetailed', bushes, { wind: 0.06 })
@@ -186,7 +220,7 @@ export function buildWorld(scene) {
     const onRise = i < 20
     const x = onRise ? rng(-100, -40) : rng(-95, 95)
     const z = onRise ? rng(-55, -25) : rng(-95, 95)
-    if (Math.hypot(x, z) < 8 || nearStream(x, z) || nearRoad(x, z)) continue
+    if (Math.hypot(x, z) < 8 || nearStream(x, z) || nearRoad(x, z) || nearForestShortcut(x, z)) continue
     ;(wrand() < 0.4 ? rocksBig : rocksSmall).push({ x, z, scale: rng(1.5, onRise ? 3.4 : 2.4), rot: rng(0, 6.28) })
   }
   scatter(scene, 'nature', 'rock_largeA', rocksBig, { collider: 0.7 })
@@ -211,6 +245,7 @@ export function buildWorld(scene) {
 // ---------- village ----------
 const UP_AXIS = new THREE.Vector3(0, 1, 0)
 const smokes = []
+const shardBeacons = []
 let keepEmber, keepEmberLight
 
 // cottage: Kenney wall tiles (1x1 cells, panel on the +x edge, rotY selects
@@ -456,16 +491,16 @@ function buildRuins(scene) {
       place(scene, 'town', 'pillar-stone', 56 + i * 4, side * 3.2 + 4, { scale: 2.6, collider: 0.6 })
     }
   }
-  for (let i = 0; i < 14; i++) {
-    const x = rng(48, 96)
-    const z = rng(-30, 36)
+  const walls = [[48, -5], [48, 8], [54, -12], [54, 13], [62, -13], [66, 14], [72, -10], [78, 14], [82, 2], [86, -7], [88, 12], [91, -18], [91, 24], [58, 21]]
+  for (const [x, z] of walls) {
     place(scene, 'grave', wrand() < 0.5 ? 'stone-wall-damaged' : 'stone-wall', x, z, { rot: rng(0, 6.28), scale: 2.4, collider: 1.0 })
   }
-  for (let i = 0; i < 10; i++) {
-    place(scene, 'grave', wrand() < 0.5 ? 'urn-round' : 'debris', rng(48, 94), rng(-28, 34), { rot: rng(0, 6.28), scale: 2 })
+  const details = [[53, -9], [57, -9], [64, -10], [68, -9], [75, 10], [79, 10], [67, 17], [73, 17], [51, 3], [52, 5]]
+  for (const [x, z] of details) {
+    place(scene, 'grave', wrand() < 0.5 ? 'urn-round' : 'debris', x, z, { rot: rng(0, 6.28), scale: 2 })
   }
-  for (let i = 0; i < 6; i++) {
-    place(scene, 'grave', 'column-large', rng(50, 92), rng(-26, 32), { rot: rng(0, 6.28), scale: 2.4, collider: 0.7 })
+  for (const [x, z] of [[51, -9], [50, 12], [59, -14], [65, 17], [76, -5], [82, 12]]) {
+    place(scene, 'grave', 'column-large', x, z, { rot: rng(0, 6.28), scale: 2.4, collider: 0.7 })
   }
 }
 
@@ -500,8 +535,7 @@ function buildKeep(scene) {
     place(scene, 'grave', 'pillar-obelisk', kx + side * 2.6, kz + 6, { scale: 3, collider: 0.7 })
     place(scene, 'grave', 'fire-basket', kx + side * 4.4, kz + 7.5, { scale: 2.4, collider: 0.5 })
   }
-  // the sanctum: a crypt holding the dim Great Ember
-  place(scene, 'grave', 'crypt-large', kx, kz - 9, { rot: Math.PI, scale: 3, collider: 3.4 })
+  // the sanctum: an open altar holding the dim Great Ember
   place(scene, 'grave', 'altar-stone', kx, kz - 7, { scale: 2.4, collider: 1.2 })
   keepEmber = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), new THREE.MeshBasicMaterial({ color: 0x662a12 }))
   keepEmber.position.set(kx, groundHeight(kx, kz - 7) + 1.6, kz - 7)
@@ -519,6 +553,15 @@ function buildKeep(scene) {
   // lightposts marking the top of the ramp
   place(scene, 'grave', 'lightpost-single', kx - 3, kz + 24, { rot: 0.4, scale: 2.4, collider: 0.3 })
   place(scene, 'grave', 'lightpost-single', kx + 3, kz + 24, { rot: -0.4, scale: 2.4, collider: 0.3 })
+  for (const [x, z] of [[streamCenter(-48), -48], [8, -60], [8, -70]]) {
+    const ember = new THREE.Mesh(new THREE.SphereGeometry(0.11, 7, 6), new THREE.MeshBasicMaterial({ color: 0xff9955 }))
+    ember.position.set(x, groundHeight(x, z) + 0.55, z)
+    ember.visible = false
+    const light = new THREE.PointLight(0xff7733, 0, 16)
+    light.position.copy(ember.position)
+    scene.add(ember, light)
+    shardBeacons.push({ ember, light, seed: x + z })
+  }
 }
 
 export function restoreGreatEmber() {
@@ -528,11 +571,26 @@ export function restoreGreatEmber() {
   keepEmberLight.intensity = 18
 }
 
-export function updateRegions(time) {
+export function updateRegions(time, shards = 0) {
+  if (shards >= 2 && shardBeacons[0] && !shardBeacons[0].ember.visible) {
+    for (const beacon of shardBeacons) beacon.ember.visible = true
+  }
+  for (const beacon of shardBeacons) {
+    if (!beacon.ember.visible) continue
+    const pulse = 1 + Math.sin(time * 3 + beacon.seed) * 0.18
+    beacon.ember.scale.setScalar(pulse)
+    beacon.light.intensity = 7 * pulse
+  }
   for (const s of smokes) {
     const f = (time * 0.16 + s.phase) % 1
     s.mesh.position.set(s.x + Math.sin(f * 7 + s.phase * 9) * 0.18 + f * 0.4, s.y + f * 2.4, s.z)
     s.mesh.scale.setScalar(0.4 + f * 1.1)
     s.mesh.material.opacity = 0.3 * (1 - f)
   }
+}
+
+// Small runnable shortcut check: `node src/regions.js`
+if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv[1]}`) {
+  if (!nearForestShortcut(shortcutCenterX(20), 20) || nearForestShortcut(-50, 20)) throw new Error('Forest shortcut must follow the circle-to-Fen route only')
+  console.log('Region check passed: the shortcut follows the existing forest route.')
 }

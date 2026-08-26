@@ -3,7 +3,7 @@ const DEFS = {
   pegasusBoots: { name: 'Pegasus Boots', desc: 'Old winged boots that remember how to cross where roads fail.' },
   rustedKey: { name: 'Rusted Key', desc: 'Old iron, teeth worn thin. Something in the village still answers to it.' },
   boneKey: { name: 'Bone Key', desc: 'Carved from something that walked. It hums near old doors.' },
-  sketch: { name: 'Mural Sketch', desc: 'A glyph copied from the ruin walls. The Keep will ask for these.' },
+  sketch: { name: 'Mural Sketch', desc: 'The ruin sequence: ▲ ◆ ●. The Keep will ask for all three.' },
 }
 
 const items = {} // id -> count
@@ -19,6 +19,18 @@ export function hasItem(id) {
 
 export function itemCount(id) {
   return items[id] ?? 0
+}
+
+export function inventorySnapshot() {
+  return { ...items }
+}
+
+export function restoreInventory(saved = {}) {
+  for (const id of Object.keys(items)) delete items[id]
+  for (const [id, count] of Object.entries(saved)) {
+    if (DEFS[id] && Number.isInteger(count) && count > 0) items[id] = Math.min(count, 99)
+  }
+  if (open) render()
 }
 
 const css = `

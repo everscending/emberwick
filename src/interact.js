@@ -40,7 +40,7 @@ export function updateInteract(player) {
   }
 
   if (best) {
-    promptEl.textContent = `E — ${best.prompt}`
+    promptEl.textContent = `E — ${typeof best.prompt === 'function' ? best.prompt() : best.prompt}`
     promptEl.style.display = 'block'
     if (pressed('KeyE')) best.onInteract()
   } else {

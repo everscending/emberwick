@@ -79,12 +79,6 @@ export function createNPC(scene, { x, z, name, robeColor = 0x775577, dialogue })
   return group
 }
 
-// ambient villagers: rotate through a few flavor lines
-export function cycler(name, texts) {
-  let i = 0
-  return () => [{ name, text: texts[i++ % texts.length] }]
-}
-
 export function updateNPCs(time) {
   for (const n of npcs) {
     n.group.scale.y = 1 + Math.sin(time * 1.8 + n.seed) * 0.012 // slow breathing

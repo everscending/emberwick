@@ -22,21 +22,21 @@ const VAULT = { x: 70, z: 14 }
 
 const MURALS = [
   {
-    x: 52, z: -20, glyph: '▲',
+    x: 55, z: -7, glyph: '▲',
     lines: [
       { text: 'A mural, older than the village. A knight kneels before a roaring flame, offering up… their own name.' },
       { text: 'Beneath it, a carved mark: a triangle. I copy it down. (Mural Sketch added)' },
     ],
   },
   {
-    x: 80, z: -10, glyph: '◆',
+    x: 66, z: -7, glyph: '◆',
     lines: [
       { text: 'The same knight, walking north alone, the flame cupped in their hands. Every other face in the carving is turned away.' },
       { text: 'The mark beneath: a diamond. Copied. (Mural Sketch added)' },
     ],
   },
   {
-    x: 66, z: 30, glyph: '●',
+    x: 77, z: 7, glyph: '●',
     lines: [
       { text: 'The last mural. The flame gone small. The knight kneels in ash, armor scorched black… armor shaped like mine.' },
       { text: 'The mark: a circle. Triangle, diamond, circle — a sequence someone wanted remembered. (Mural Sketch added)' },
@@ -52,7 +52,7 @@ function part(geo, color, x = 0, y = 0, z = 0) {
   return m
 }
 
-const state = { orientations: [0, 0, 0], solved: false }
+const state = { orientations: [0, 0, 0], solved: false, murals: [false, false, false], arrivalSeen: false }
 let beamGroup
 
 export function setupRuins(scene) {
@@ -60,6 +60,8 @@ export function setupRuins(scene) {
   addTrigger({
     x: 40, z: 2, r: 6,
     fire: () => {
+      if (state.arrivalSeen) return
+      state.arrivalSeen = true
       if (questState.q3 === 0) questState.q3 = 1
       say([
         { text: 'The drowned ruins. Columns like broken teeth, and pools that hold the sky too still.' },
@@ -69,7 +71,7 @@ export function setupRuins(scene) {
   })
 
   // murals
-  for (const m of MURALS) {
+  MURALS.forEach((m, i) => {
     const gy = groundHeight(m.x, m.z)
     const slab = part(new THREE.BoxGeometry(2.4, 2.0, 0.35), 0x6e7a68, m.x, gy + 1.0, m.z)
     slab.rotation.y = Math.atan2(70 - m.x, 8 - m.z) // face the heart of the ruins
@@ -80,19 +82,18 @@ export function setupRuins(scene) {
     glyph.rotation.y = slab.rotation.y
     glyph.translateZ(0.19)
     scene.add(glyph)
-    let examined = false
     addInteractable({
       position: new THREE.Vector3(m.x, gy, m.z),
       prompt: 'Study the mural',
       onInteract: () => {
-        if (!examined) {
-          examined = true
+        if (!state.murals[i]) {
+          state.murals[i] = true
           addItem('sketch')
         }
         say(m.lines)
       },
     })
-  }
+  })
 
   // sunstone: the beam source
   const sy = groundHeight(SUNSTONE.x, SUNSTONE.z)
@@ -178,6 +179,10 @@ function solve(scene) {
   state.solved = true
   scene.remove(state.lid)
   say([{ text: 'The light lands true — the vault sighs open, like it had been holding its breath for a century.' }])
+  spawnShard(scene)
+}
+
+function spawnShard(scene) {
   const vy = groundHeight(VAULT.x, VAULT.z)
   const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.32), new THREE.MeshBasicMaterial({ color: 0xff9944 }))
   shard.position.set(VAULT.x, vy + 1.4, VAULT.z)
@@ -196,4 +201,23 @@ function solve(scene) {
       ])
     },
   })
+}
+
+export function ruinsSnapshot() {
+  return { orientations: [...state.orientations], solved: state.solved, murals: [...state.murals], arrivalSeen: state.arrivalSeen }
+}
+
+export function restoreRuins(saved = {}, scene) {
+  const orientations = Array.isArray(saved.orientations) ? saved.orientations : []
+  state.orientations = MIRRORS.map((_, i) => Number.isInteger(orientations[i]) ? THREE.MathUtils.clamp(orientations[i], 0, 7) : 0)
+  state.murals = MURALS.map((_, i) => Boolean(saved.murals?.[i]))
+  state.arrivalSeen = Boolean(saved.arrivalSeen) || questState.q3 > 0
+  state.solved = Boolean(saved.solved) || questState.q3 >= 2
+  if (state.solved) state.orientations = MIRRORS.map(({ need }) => need)
+  MIRRORS.forEach((mirror, i) => { mirror.glass.rotation.y = (state.orientations[i] * Math.PI) / 4 })
+  if (state.solved) {
+    scene.remove(state.lid)
+    if (questState.q3 === 1) spawnShard(scene)
+  }
+  rebuildBeam(scene)
 }
