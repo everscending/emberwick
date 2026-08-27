@@ -385,6 +385,26 @@ function createDrownedSentinel(spawn) {
   jumpShadow.position.y = 0.04
   jumpShadow.visible = false
   group.add(jumpShadow)
+  const crackVertices = []
+  for (let i = 0; i < 12; i++) {
+    let x = 0
+    let z = 0
+    for (let step = 1; step <= 3; step++) {
+      const angle = i * Math.PI / 6 + Math.sin(i * 3 + step) * 0.16
+      const radius = 0.18 + step * 0.62
+      const nx = Math.cos(angle) * radius
+      const nz = Math.sin(angle) * radius
+      crackVertices.push(x, 0.045, z, nx, 0.045, nz)
+      x = nx
+      z = nz
+    }
+  }
+  const groundCracksMat = new THREE.LineBasicMaterial({ color: 0x111b19, transparent: true, opacity: 0, depthWrite: false })
+  const groundCracksGeo = new THREE.BufferGeometry()
+  groundCracksGeo.setAttribute('position', new THREE.Float32BufferAttribute(crackVertices, 3))
+  const groundCracks = new THREE.LineSegments(groundCracksGeo, groundCracksMat)
+  groundCracks.visible = false
+  group.add(groundCracks)
   const impactBurst = new THREE.Group()
   const impactBurstMat = new THREE.MeshBasicMaterial({ color: 0xb2ffe9, transparent: true, opacity: 0, depthWrite: false })
   for (let i = 0; i < 10; i++) {
@@ -399,8 +419,9 @@ function createDrownedSentinel(spawn) {
   group.position.set(x, groundHeight(x, z), z)
   scene.add(group)
   enemies.push({
-    id: nextId++, type: 'sentinel', group, upperBody, body, mat, arms, legs, core, coreHalo, coreLight, wisps, slamRing, slamMats, jumpShadow, jumpShadowMat, impactBurst, impactBurstMat, hp: 180, maxHp: 180,
+    id: nextId++, type: 'sentinel', group, upperBody, body, mat, arms, legs, core, coreHalo, coreLight, wisps, slamRing, slamMats, jumpShadow, jumpShadowMat, groundCracks, groundCracksMat, impactBurst, impactBurstMat, hp: 180, maxHp: 180,
     state: 'stalk', stateTime: 0, cooldown: 0.8, attackHit: false,
+    slamStart: new THREE.Vector3(), slamTarget: new THREE.Vector3(),
     knockback: new THREE.Vector3(), flashTimer: 0, pop: 0, dying: false, spawn,
     ...createPatrol(x, z, 3, 0.7),
   })
@@ -747,10 +768,11 @@ function updateThornback(e, player, dt, patrolOnly) {
   e.group.position.y = groundHeight(e.group.position.x, e.group.position.z)
 }
 
-function setSentinelHeight(e, groundY, height) {
-  e.group.position.y = groundY + height
-  e.slamRing.position.y = 0.3 - height
-  e.jumpShadow.position.y = 0.04 - height
+function setSentinelArc(e, progress, height) {
+  e.group.position.lerpVectors(e.slamStart, e.slamTarget, progress)
+  e.group.position.y += height
+  e.slamRing.position.y = 0.3
+  e.jumpShadow.position.y = groundHeight(e.group.position.x, e.group.position.z) - e.group.position.y + 0.04
   e.jumpShadow.scale.setScalar(1 - height / SENTINEL_JUMP_HEIGHT * 0.45)
   e.jumpShadowMat.opacity = 0.24 - height / SENTINEL_JUMP_HEIGHT * 0.1
 }
@@ -777,6 +799,7 @@ function updateSentinel(e, player, dt, patrolOnly) {
     e.slamRing.visible = false
     e.slamRing.position.y = 0.3
     e.jumpShadow.visible = false
+    e.groundCracks.visible = false
     e.impactBurst.visible = false
     const chasing = dist < 9 && dist > 3.4
     const walking = chasing || (dist >= 9 && updatePatrol(e, dt, 0.7))
@@ -831,13 +854,22 @@ function updateSentinel(e, player, dt, patrolOnly) {
       forearm.rotation.z = -side * (0.35 + t * 0.65)
     })
     if (t >= 1) {
+      e.slamStart.copy(e.group.position)
+      e.slamTarget.set(ppos.x, groundHeight(ppos.x, ppos.z), ppos.z)
+      const flightX = e.slamTarget.x - e.slamStart.x
+      const flightZ = e.slamTarget.z - e.slamStart.z
+      if (flightX * flightX + flightZ * flightZ > 0.01) e.group.rotation.y = Math.atan2(flightX, flightZ)
       e.state = 'leap'
       e.stateTime = 0
     }
   } else if (e.state === 'leap') {
     const t = Math.min(1, e.stateTime / SENTINEL_LEAP)
+    const tracking = Math.min(1, dt * 4)
+    e.slamTarget.x = THREE.MathUtils.lerp(e.slamTarget.x, ppos.x, tracking)
+    e.slamTarget.z = THREE.MathUtils.lerp(e.slamTarget.z, ppos.z, tracking)
+    e.slamTarget.y = groundHeight(e.slamTarget.x, e.slamTarget.z)
     const height = SENTINEL_JUMP_HEIGHT * (1 - (1 - t) ** 3)
-    setSentinelHeight(e, groundHeight(e.group.position.x, e.group.position.z), height)
+    setSentinelArc(e, t * 0.65, height)
     e.slamRing.visible = true
     e.jumpShadow.visible = true
     e.slamRing.scale.setScalar(1 + Math.sin(t * Math.PI) * 0.06)
@@ -862,8 +894,7 @@ function updateSentinel(e, player, dt, patrolOnly) {
   } else if (e.state === 'slam') {
     const t = Math.min(1, e.stateTime / SENTINEL_DROP)
     const height = SENTINEL_JUMP_HEIGHT * (1 - t * t)
-    const groundY = groundHeight(e.group.position.x, e.group.position.z)
-    setSentinelHeight(e, groundY, height)
+    setSentinelArc(e, 0.65 + t * 0.35, height)
     e.slamRing.rotation.y += dt * 4
     e.mat.emissive.setHex(0x174b40)
     e.upperBody.position.y = 0.08 - t * 0.24
@@ -879,14 +910,17 @@ function updateSentinel(e, player, dt, patrolOnly) {
       forearm.rotation.z = -side * (1.05 - t * 0.35)
     })
     if (t >= 1) {
-      e.group.position.y = groundY
       e.slamRing.position.y = 0.3
       e.jumpShadow.visible = false
-      if (!e.attackHit && dist < SENTINEL_SLAM_RADIUS) hurtPlayer(player, 28, e.group.position)
+      const landingDistance = Math.hypot(ppos.x - e.group.position.x, ppos.z - e.group.position.z)
+      if (!e.attackHit && landingDistance < SENTINEL_SLAM_RADIUS) hurtPlayer(player, 28, e.group.position)
       e.attackHit = true
       player.shake = Math.max(player.shake ?? 0, 0.55)
       e.state = 'recover'
       e.stateTime = 0
+      e.groundCracks.visible = true
+      e.groundCracks.scale.setScalar(0.35)
+      e.groundCracksMat.opacity = 0.9
       e.impactBurst.visible = true
       e.mat.emissive.setHex(0x000000)
     }
@@ -901,6 +935,10 @@ function updateSentinel(e, player, dt, patrolOnly) {
     e.impactBurst.scale.setScalar(0.45 + impact * 1.8)
     e.impactBurst.position.y = 0.05 + impact * 0.35
     e.impactBurstMat.opacity = 0.85 * (1 - impact)
+    const crackGrowth = Math.min(1, e.stateTime / 0.18)
+    e.groundCracks.visible = e.stateTime < 0.95
+    e.groundCracks.scale.setScalar(0.35 + crackGrowth * 0.65)
+    e.groundCracksMat.opacity = 0.9 * (1 - THREE.MathUtils.smoothstep(e.stateTime, 0.45, 0.95))
     const baseScale = e.group.scale.x
     const squash = 1 - Math.min(1, e.stateTime / 0.28)
     e.group.scale.set(baseScale * (1 + squash * 0.15), baseScale * (1 - squash * 0.28), baseScale * (1 + squash * 0.15))
@@ -921,6 +959,7 @@ function updateSentinel(e, player, dt, patrolOnly) {
       e.stateTime = 0
       e.cooldown = 0.8
       e.impactBurst.visible = false
+      e.groundCracks.visible = false
     }
   }
   if (e.state !== 'leap' && e.state !== 'slam') e.group.position.y = groundHeight(e.group.position.x, e.group.position.z)
@@ -1256,7 +1295,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   const sentinelScene = new THREE.Scene()
   spawnDrownedSentinel(sentinelScene, 0, 0)
   const sentinel = enemies.at(-1)
-  if (sentinel.arms.length !== 2 || sentinel.legs.length !== 2 || sentinel.wisps.length !== 5 || sentinel.slamRing.children.length !== 14) throw new Error('Drowned Sentinel must retain its articulated model and layered effects')
+  if (sentinel.arms.length !== 2 || sentinel.legs.length !== 2 || sentinel.wisps.length !== 5 || sentinel.slamRing.children.length !== 14 || sentinel.groundCracks.geometry.attributes.position.count !== 72) throw new Error('Drowned Sentinel must retain its articulated model and layered effects')
   elapsed = 0.25
   sentinel.cooldown = 10
   updateSentinel(sentinel, { group: { position: new THREE.Vector3(6, 0, 0) } }, 0.016)
@@ -1272,17 +1311,19 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   if (sentinel.state !== 'leap') throw new Error('Runic Slam must launch after its ground telegraph')
   sentinel.stateTime = SENTINEL_LEAP * 0.5
   updateSentinel(sentinel, nearbyPlayer, 0.01)
-  if (sentinel.group.position.y < 3 || sentinel.legs[0].knee.rotation.x < 0.8 || Math.abs(sentinel.group.position.y + sentinel.jumpShadow.position.y - 0.04) > 0.01) throw new Error('Runic Slam must visibly rise while its contact shadow stays on the ground')
+  const shadowGround = groundHeight(sentinel.group.position.x, sentinel.group.position.z) + 0.04
+  if (sentinel.group.position.y < 3 || sentinel.group.position.x < 0.5 || sentinel.legs[0].knee.rotation.x < 0.8 || Math.abs(sentinel.group.position.y + sentinel.jumpShadow.position.y - shadowGround) > 0.01 || sentinel.slamRing.position.y !== 0.3) throw new Error('Runic Slam must arc toward its target while its shadow stays grounded and its rune ring follows')
   sentinel.stateTime = SENTINEL_LEAP - 0.01
   updateSentinel(sentinel, nearbyPlayer, 0.02)
   const apex = sentinel.group.position.y
+  const apexX = sentinel.group.position.x
   sentinel.stateTime = SENTINEL_DROP * 0.5
   updateSentinel(sentinel, nearbyPlayer, 0.01)
-  if (sentinel.state !== 'slam' || sentinel.group.position.y >= apex) throw new Error('Runic Slam must accelerate back toward the ground')
+  if (sentinel.state !== 'slam' || sentinel.group.position.y >= apex || sentinel.group.position.x <= apexX) throw new Error('Runic Slam must continue forward while accelerating back toward the ground')
   sentinel.stateTime = SENTINEL_DROP - 0.01
   const safePlayer = { group: { position: new THREE.Vector3(10, 0, 0) }, invulnerable: true, shake: 0 }
   updateSentinel(sentinel, safePlayer, 0.02)
-  if (sentinel.state !== 'recover' || !sentinel.impactBurst.visible || safePlayer.shake < 0.5) throw new Error('Runic Slam landing must create a heavy area-impact reaction')
+  if (sentinel.state !== 'recover' || Math.abs(sentinel.group.position.x - 3) > 0.01 || !sentinel.impactBurst.visible || !sentinel.groundCracks.visible || safePlayer.shake < 0.5) throw new Error('Runic Slam must land on its locked target with a heavy cracking area-impact reaction')
   const bossScene = new THREE.Scene()
   spawnAshKnight(bossScene, 8, -87)
   const boss = enemies.at(-1)
@@ -1293,5 +1334,5 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   if (boss.state !== 'recover') throw new Error('Ash Knight recovery must remain punishable for 1.25 seconds')
   updateBoss(boss, { group: { position: new THREE.Vector3(15, 0, -87) } }, 0.02)
   if (boss.state !== 'idle') throw new Error('Ash Knight must resume attacking after its recovery window')
-  console.log('Enemy check passed: obstacle-aware patrols, Runic Slam leap/impact, boss cycle, respawns, and articulated locomotion.')
+  console.log('Enemy check passed: obstacle-aware patrols, targeted Runic Slam arc/cracks, boss cycle, respawns, and articulated locomotion.')
 }
