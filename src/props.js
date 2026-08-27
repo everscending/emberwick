@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { grad } from './materials.js'
+import { grad, windVertexTransform } from './materials.js'
 import { addCollider } from './collision.js'
 import { groundHeight } from './ground.js'
 
@@ -101,16 +101,7 @@ function toonify(root, windAmp) {
           .replace('#include <common>', '#include <common>\nuniform float uTime;')
           .replace(
             '#include <begin_vertex>',
-            `#include <begin_vertex>
-            #ifdef USE_INSTANCING
-              vec3 iPos = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
-            #else
-              vec3 iPos = vec3(modelMatrix[3][0], modelMatrix[3][1], modelMatrix[3][2]);
-            #endif
-            float wob = sin(uTime * 1.6 + iPos.x * 0.6 + iPos.z * 0.8) + 0.4 * sin(uTime * 3.1 + iPos.z * 1.3);
-            float bend = ${windAmp.toFixed(4)} * max(0.0, transformed.y);
-            transformed.x += wob * bend;
-            transformed.z += wob * bend * 0.55;`
+            windVertexTransform(windAmp)
           )
       }
       windMats.push(m)

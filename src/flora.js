@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { toon } from './materials.js'
+import { toon, windVertexTransform } from './materials.js'
 import { wrand } from './rand.js'
 import { addCollider } from './collision.js'
 import { groundHeight, groundSlope } from './ground.js'
@@ -7,7 +7,7 @@ import { groundHeight, groundSlope } from './ground.js'
 // Instanced vegetation with GPU wind. Each archetype is a few instanced part
 // meshes (one draw call per part, any number of trees). Wind bends vertices in
 // the shader — rigid trunks use normal toon materials while foliage, grass,
-// and flowers sway out of step.
+// and flowers share one restrained prevailing wind.
 
 const windMats = []
 
@@ -20,14 +20,7 @@ function windToon(color, amp) {
       .replace('#include <common>', '#include <common>\nuniform float uTime;')
       .replace(
         '#include <begin_vertex>',
-        `#include <begin_vertex>
-        #ifdef USE_INSTANCING
-          vec3 iPos = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
-          float wob = sin(uTime * 1.6 + iPos.x * 0.6 + iPos.z * 0.8) + 0.4 * sin(uTime * 3.1 + iPos.z * 1.3);
-          float bend = ${amp.toFixed(4)} * max(0.0, transformed.y);
-          transformed.x += wob * bend;
-          transformed.z += wob * bend * 0.55;
-        #endif`
+        windVertexTransform(amp)
       )
   }
   windMats.push(m)

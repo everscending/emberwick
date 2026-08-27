@@ -1,5 +1,10 @@
 export const keys = {}
 const justPressed = new Set()
+const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD']
+const TOUCH_DIRECTIONS = [
+  ['KeyD'], ['KeyS', 'KeyD'], ['KeyS'], ['KeyS', 'KeyA'],
+  ['KeyA'], ['KeyW', 'KeyA'], ['KeyW'], ['KeyW', 'KeyD'],
+]
 
 // the browser eats keyup events when focus is lost (context menu, alt-tab),
 // which would leave movement keys stuck down forever
@@ -7,53 +12,77 @@ function releaseAll() {
   for (const k in keys) keys[k] = false
 }
 
-function bindTouchButton(button) {
-  const setDown = (down) => {
-    keys[button.dataset.key] = down
-    button.setAttribute('aria-pressed', String(down))
-  }
-  button.addEventListener('pointerdown', (event) => {
+function setTouchDirection(dx, dy) {
+  MOVE_KEYS.forEach((code) => (keys[code] = false))
+  if (Math.hypot(dx, dy) < 12) return
+  const sector = (Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) + 8) % 8
+  TOUCH_DIRECTIONS[sector].forEach((code) => (keys[code] = true))
+}
+
+function bindTouchPad(pad) {
+  const thumb = pad.querySelector('#touch-thumb')
+  let activePointer = null
+
+  const move = (event) => {
+    if (event.pointerId !== activePointer) return
     event.preventDefault()
-    button.setPointerCapture(event.pointerId)
-    setDown(true)
-  })
-  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-    button.addEventListener(type, () => setDown(false))
+    const rect = pad.getBoundingClientRect()
+    const dx = event.clientX - rect.left - rect.width / 2
+    const dy = event.clientY - rect.top - rect.height / 2
+    const distance = Math.hypot(dx, dy)
+    const scale = distance > 46 ? 46 / distance : 1
+    thumb.style.left = `${rect.width / 2 + dx * scale}px`
+    thumb.style.top = `${rect.height / 2 + dy * scale}px`
+    setTouchDirection(dx, dy)
   }
-  button.addEventListener('click', (event) => event.stopPropagation())
+
+  pad.addEventListener('pointerdown', (event) => {
+    if (activePointer !== null) return
+    activePointer = event.pointerId
+    pad.setPointerCapture(event.pointerId)
+    move(event)
+  })
+  pad.addEventListener('pointermove', move)
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    pad.addEventListener(type, (event) => {
+      if (event.pointerId !== activePointer) return
+      activePointer = null
+      setTouchDirection(0, 0)
+      thumb.style.left = thumb.style.top = '50%'
+    })
+  }
+  for (const type of ['selectstart', 'dragstart', 'contextmenu']) {
+    pad.addEventListener(type, (event) => event.preventDefault())
+  }
 }
 
 function createTouchControls() {
   const style = document.createElement('style')
   style.textContent = `
-#touch-dpad { position:fixed; left:max(16px,env(safe-area-inset-left)); bottom:max(16px,env(safe-area-inset-bottom));
-  z-index:30; display:none; grid-template:repeat(3,52px)/repeat(3,52px); gap:4px; touch-action:none; user-select:none; }
-#touch-dpad button { border:1px solid rgba(255,210,130,.65); border-radius:14px; color:#fff2d2; background:rgba(24,15,24,.7);
-  font:24px/1 system-ui,sans-serif; touch-action:none; -webkit-tap-highlight-color:transparent; }
-#touch-dpad button:active { background:rgba(122,67,37,.9); transform:scale(.94); }
-#touch-dpad [data-key="KeyW"] { grid-area:1/2; }
-#touch-dpad [data-key="KeyA"] { grid-area:2/1; }
-#touch-dpad [data-key="KeyD"] { grid-area:2/3; }
-#touch-dpad [data-key="KeyS"] { grid-area:3/2; }
+#touch-pad { position:fixed; left:max(18px,env(safe-area-inset-left)); bottom:max(18px,env(safe-area-inset-bottom)); z-index:30;
+  display:none; width:152px; aspect-ratio:1; border:2px solid rgba(255,210,130,.55); border-radius:50%; box-sizing:border-box;
+  background:repeating-conic-gradient(from 22.5deg,rgba(255,210,130,.18) 0 1deg,transparent 1deg 45deg),rgba(24,15,24,.66);
+  box-shadow:inset 0 0 24px rgba(0,0,0,.7),0 4px 20px rgba(0,0,0,.35); touch-action:none; user-select:none;
+  -webkit-user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
+#touch-pad::after { content:''; position:absolute; inset:31px; border:1px solid rgba(255,210,130,.22); border-radius:50%; pointer-events:none; }
+#touch-thumb { position:absolute; left:50%; top:50%; width:58px; aspect-ratio:1; border:1px solid rgba(255,225,160,.8); border-radius:50%;
+  transform:translate(-50%,-50%); background:radial-gradient(circle at 40% 35%,rgba(255,221,147,.75),rgba(122,67,37,.88) 65%);
+  box-shadow:0 3px 10px rgba(0,0,0,.6),inset 0 0 8px rgba(255,235,190,.3); pointer-events:none; }
 #rotate-phone { position:fixed; inset:0; z-index:200; display:none; flex-direction:column; align-items:center; justify-content:center; gap:10px;
   padding:28px; box-sizing:border-box; color:#f2e5c8; background:#0b0b12; text-align:center; font:18px Georgia,serif; }
 #rotate-phone strong { color:#ffbd68; font-size:25px; }
-@media (pointer:coarse) and (orientation:landscape) { #touch-dpad { display:grid; } }
+@media (pointer:coarse) and (orientation:landscape) { #touch-pad { display:block; } }
 @media (pointer:coarse) and (orientation:portrait) { #rotate-phone { display:flex; } }
-body.title-open #touch-dpad { visibility:hidden; }
+body.title-open #touch-pad { visibility:hidden; }
 `
   document.head.appendChild(style)
 
-  const controls = document.createElement('nav')
-  controls.id = 'touch-dpad'
-  controls.setAttribute('aria-label', 'Movement controls')
-  controls.innerHTML = `
-    <button type="button" data-key="KeyW" aria-label="Move up" aria-pressed="false">▲</button>
-    <button type="button" data-key="KeyA" aria-label="Move left" aria-pressed="false">◀</button>
-    <button type="button" data-key="KeyD" aria-label="Move right" aria-pressed="false">▶</button>
-    <button type="button" data-key="KeyS" aria-label="Move down" aria-pressed="false">▼</button>`
-
-  controls.querySelectorAll('button').forEach(bindTouchButton)
+  const controls = document.createElement('div')
+  controls.id = 'touch-pad'
+  controls.setAttribute('role', 'group')
+  controls.setAttribute('aria-label', 'Eight-direction movement control')
+  controls.innerHTML = '<span id="touch-thumb" aria-hidden="true"></span>'
+  bindTouchPad(controls)
 
   const rotate = document.createElement('div')
   rotate.id = 'rotate-phone'
@@ -92,19 +121,18 @@ export function endFrame() {
   justPressed.clear()
 }
 
-// Small runnable touch-state check: `node src/input.js`
+// Small runnable eight-direction check: `node src/input.js`
 if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv[1]}`) {
-  const handlers = {}
-  const button = {
-    dataset: { key: 'KeyW' },
-    addEventListener: (type, handler) => (handlers[type] = handler),
-    setAttribute() {},
-    setPointerCapture() {},
+  const cases = [
+    [20, 0, 'KeyD'], [20, 20, 'KeyD,KeyS'], [0, 20, 'KeyS'], [-20, 20, 'KeyA,KeyS'],
+    [-20, 0, 'KeyA'], [-20, -20, 'KeyA,KeyW'], [0, -20, 'KeyW'], [20, -20, 'KeyD,KeyW'],
+  ]
+  for (const [x, y, expected] of cases) {
+    setTouchDirection(x, y)
+    const actual = MOVE_KEYS.filter((code) => keys[code]).sort().join(',')
+    if (actual !== expected) throw new Error(`Touch direction ${x},${y} produced ${actual}; expected ${expected}`)
   }
-  bindTouchButton(button)
-  handlers.pointerdown({ preventDefault() {}, pointerId: 1 })
-  if (!keys.KeyW) throw new Error('Touch down must press the movement key')
-  handlers.pointerup()
-  if (keys.KeyW) throw new Error('Touch up must release the movement key')
-  console.log('Touch input check passed.')
+  setTouchDirection(0, 0)
+  if (MOVE_KEYS.some((code) => keys[code])) throw new Error('Touch dead zone must release movement')
+  console.log('Eight-direction touch input check passed.')
 }
