@@ -12,6 +12,8 @@ const loader = new GLTFLoader()
 const cache = new Map() // "pack/name" -> Promise<THREE.Group>
 const windMats = []
 
+export const windAffectsMaterial = (name, amp) => Boolean(amp) && !/^wood/i.test(name ?? '')
+
 // EMBERWICK grade: Kenney's pastel-teal palette remapped to our dusk world.
 // Named flat materials (nature pack) get exact palette swaps; anything else
 // falls back to an HSL grade that tames teal-greens and deepens values.
@@ -91,7 +93,7 @@ function toonify(root, windAmp) {
       map: old.map ? gradeTexture(old.map) : null,
       gradientMap: grad,
     })
-    if (windAmp) {
+    if (windAffectsMaterial(old.name, windAmp)) {
       m.userData.uTime = { value: 0 }
       m.onBeforeCompile = (shader) => {
         shader.uniforms.uTime = m.userData.uTime
@@ -177,4 +179,10 @@ export function scatter(scene, pack, name, spots, { collider = 0, wind = 0 } = {
 
 export function updateProps(time) {
   for (const m of windMats) m.userData.uTime.value = time
+}
+
+// Small runnable wind-material check: `node src/props.js`
+if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv[1]}`) {
+  if (windAffectsMaterial('woodBarkDark', 0.02) || !windAffectsMaterial('leafsDark', 0.02)) throw new Error('Tree wind must move foliage without bending trunks')
+  console.log('Prop check passed: tree trunks stay rigid while foliage catches the wind.')
 }

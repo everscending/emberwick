@@ -2,8 +2,8 @@ import * as THREE from 'three'
 import { toonRim as toon } from './materials.js'
 import { stats, hurtPlayer, inAttackArc } from './player.js'
 import { onEnemyKilled, questState } from './quests.js'
-import { resolveCircle } from './collision.js'
-import { groundHeight } from './ground.js'
+import { addCollider, isCirclePathClear, resolveCircle } from './collision.js'
+import { applySlopeBlock, groundHeight } from './ground.js'
 import { triggerAshKnightDeathFx, triggerEnemyDamageFx } from './debugfx.js'
 
 const AGGRO_RANGE = 12
@@ -11,10 +11,80 @@ const CONTACT_RANGE = 1.0
 const CONTACT_DAMAGE = 10
 const BOSS_DEATH_FALL_START = 0.9
 const BOSS_DEATH_FALL_END = 1.8
+const PATROL_RADIUS = 3
+const SENTINEL_WINDUP = 0.6
+const SENTINEL_LEAP = 0.65
+const SENTINEL_DROP = 0.28
+const SENTINEL_JUMP_HEIGHT = 4.4
+const SENTINEL_SLAM_RADIUS = 3.4
 
 const enemies = []
 const spawnPoints = []
 let nextId = 1
+
+function createPatrol(x, z, radius = PATROL_RADIUS, bodyRadius = 0.55) {
+  const patrol = {
+    patrolHome: new THREE.Vector2(x, z),
+    patrolTarget: new THREE.Vector2(),
+    patrolDir: new THREE.Vector3(),
+    patrolRadius: radius,
+    patrolBodyRadius: bodyRadius,
+    patrolWait: Math.random() * 1.5,
+  }
+  choosePatrolTarget(patrol)
+  return patrol
+}
+
+function choosePatrolTarget(e) {
+  const fromX = e.group?.position.x ?? e.patrolHome.x
+  const fromZ = e.group?.position.z ?? e.patrolHome.y
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const angle = Math.random() * Math.PI * 2
+    const distance = Math.sqrt(Math.random()) * e.patrolRadius
+    const x = e.patrolHome.x + Math.cos(angle) * distance
+    const z = e.patrolHome.y + Math.sin(angle) * distance
+    if (isCirclePathClear(fromX, fromZ, x, z, e.patrolBodyRadius + 0.1)) {
+      e.patrolTarget.set(x, z)
+      return
+    }
+  }
+  e.patrolTarget.set(fromX, fromZ)
+}
+
+function patrolDirection(e, dt) {
+  if (e.patrolWait > 0) {
+    e.patrolWait = Math.max(0, e.patrolWait - dt)
+    return null
+  }
+  e.patrolDir.set(e.patrolTarget.x - e.group.position.x, 0, e.patrolTarget.y - e.group.position.z)
+  if (e.patrolDir.lengthSq() < 0.09) {
+    choosePatrolTarget(e)
+    e.patrolWait = 0.8 + Math.random() * 1.8
+    return null
+  }
+  return e.patrolDir.normalize()
+}
+
+function movePatrol(e, dir, distance) {
+  const fromX = e.group.position.x
+  const fromZ = e.group.position.z
+  e.group.position.addScaledVector(dir, distance)
+  applySlopeBlock(fromX, fromZ, e.group.position)
+  resolveCircle(e.group.position, e.patrolBodyRadius)
+  const progress = (e.group.position.x - fromX) * dir.x + (e.group.position.z - fromZ) * dir.z
+  if (progress < distance * 0.5) {
+    choosePatrolTarget(e)
+    e.patrolWait = 0.4 + Math.random() * 0.8
+    return false
+  }
+  e.group.rotation.y = Math.atan2(dir.x, dir.z)
+  return true
+}
+
+function updatePatrol(e, dt, speed) {
+  const dir = patrolDirection(e, dt)
+  return dir ? movePatrol(e, dir, speed * dt) : false
+}
 
 function registerSpawn(type, scene, x, z, respawn, create, details = {}) {
   const spawn = { type, scene, x, z, respawn, alive: true, ...details }
@@ -92,6 +162,9 @@ function createSlime(spawn) {
     dying: false,
     dieTime: 0,
     spawn,
+    hopDir: new THREE.Vector3(),
+    patrolHop: false,
+    ...createPatrol(x, z),
   })
 }
 
@@ -169,6 +242,7 @@ function createThornback(spawn) {
     id: nextId++, type: 'thornback', group, body, mat, legs, hp: 140, maxHp: 140,
     state: 'stalk', stateTime: 0, cooldown: 0.6, chargeDir: new THREE.Vector3(), attackHit: false,
     knockback: new THREE.Vector3(), flashTimer: 0, pop: 0, dying: false, spawn,
+    ...createPatrol(x, z),
   })
 }
 
@@ -305,12 +379,30 @@ function createDrownedSentinel(spawn) {
   slamRing.position.y = 0.3 // stays readable over uneven ruin terrain
   slamRing.visible = false
   group.add(slamRing)
+  const jumpShadowMat = new THREE.MeshBasicMaterial({ color: 0x07110f, transparent: true, opacity: 0.24, depthWrite: false })
+  const jumpShadow = new THREE.Mesh(new THREE.CircleGeometry(0.72, 20), jumpShadowMat)
+  jumpShadow.rotation.x = -Math.PI / 2
+  jumpShadow.position.y = 0.04
+  jumpShadow.visible = false
+  group.add(jumpShadow)
+  const impactBurst = new THREE.Group()
+  const impactBurstMat = new THREE.MeshBasicMaterial({ color: 0xb2ffe9, transparent: true, opacity: 0, depthWrite: false })
+  for (let i = 0; i < 10; i++) {
+    const a = i * Math.PI * 2 / 10
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.7, 4), impactBurstMat)
+    spike.position.set(Math.cos(a) * 0.75, 0.28, Math.sin(a) * 0.75)
+    spike.rotation.set(-Math.sin(a) * 0.5, a, Math.cos(a) * 0.5)
+    impactBurst.add(spike)
+  }
+  impactBurst.visible = false
+  group.add(impactBurst)
   group.position.set(x, groundHeight(x, z), z)
   scene.add(group)
   enemies.push({
-    id: nextId++, type: 'sentinel', group, upperBody, body, mat, arms, legs, core, coreHalo, coreLight, wisps, slamRing, slamMats, hp: 180, maxHp: 180,
+    id: nextId++, type: 'sentinel', group, upperBody, body, mat, arms, legs, core, coreHalo, coreLight, wisps, slamRing, slamMats, jumpShadow, jumpShadowMat, impactBurst, impactBurstMat, hp: 180, maxHp: 180,
     state: 'stalk', stateTime: 0, cooldown: 0.8, attackHit: false,
     knockback: new THREE.Vector3(), flashTimer: 0, pop: 0, dying: false, spawn,
+    ...createPatrol(x, z, 3, 0.7),
   })
 }
 
@@ -363,6 +455,7 @@ export function spawnGravewarden(scene, x, z) {
     flashTimer: 0,
     pop: 0,
     dying: false,
+    ...createPatrol(x, z, 2.8, 0.75),
   })
 }
 
@@ -443,20 +536,23 @@ export function spawnAshKnight(scene, x, z, onDefeat) {
     pop: 0,
     dying: false,
     onDefeat,
+    ...createPatrol(x, z, 2.4, 0.8),
   })
 }
 
-function updateWarden(e, player, dt) {
+function updateWarden(e, player, dt, patrolOnly) {
   const ppos = player.group.position
   const to = ppos.clone().sub(e.group.position).setY(0)
-  const dist = to.length()
+  const dist = patrolOnly ? Infinity : to.length()
   e.stateTime += dt
   e.cooldown = Math.max(0, e.cooldown - dt)
   if (e.state === 'stalk') {
-    if (dist > 1.6) {
+    if (dist < AGGRO_RANGE && dist > 1.6) {
       to.normalize()
       e.group.position.addScaledVector(to, 2.3 * dt)
       e.group.rotation.y = Math.atan2(to.x, to.z)
+    } else if (dist >= AGGRO_RANGE) {
+      updatePatrol(e, dt, 0.8)
     }
     e.group.position.y = groundHeight(e.group.position.x, e.group.position.z) + Math.sin(elapsed * 2) * 0.08 // eerie hover
     if (dist < 5.5 && e.cooldown <= 0) {
@@ -496,12 +592,12 @@ export function bossAttackForIndex(index) {
   return ['slashWindup', 'chargeWindup', 'slamWindup'][index % 3]
 }
 
-function updateBoss(e, player, dt) {
+function updateBoss(e, player, dt, patrolOnly) {
   e.stateTime += dt
   e.cooldown = Math.max(0, e.cooldown - dt)
   e.group.position.y = groundHeight(e.group.position.x, e.group.position.z)
-  if (questState.q4 !== 1) {
-    e.group.rotation.y += dt * 0.12
+  if (patrolOnly || questState.q4 !== 1) {
+    if (!updatePatrol(e, dt, 0.65)) e.group.rotation.y += dt * 0.12
     return
   }
 
@@ -592,13 +688,14 @@ function bossDeathPoseAt(time) {
   }
 }
 
-function updateThornback(e, player, dt) {
+function updateThornback(e, player, dt, patrolOnly) {
   const ppos = player.group.position
   const to = ppos.clone().sub(e.group.position).setY(0)
-  const dist = to.length()
+  const dist = patrolOnly ? Infinity : to.length()
   e.stateTime += dt
   e.cooldown = Math.max(0, e.cooldown - dt)
-  const stride = e.state === 'charge' ? 0.4 : e.state === 'stalk' && dist < 10 ? 0.22 : 0
+  const patrolling = e.state === 'stalk' && dist >= 10 && updatePatrol(e, dt, 0.9)
+  const stride = e.state === 'charge' ? 0.4 : e.state === 'stalk' && (dist < 10 || patrolling) ? 0.22 : 0
   const pace = e.state === 'charge' ? 22 : 7
   const brace = e.state === 'windup' ? Math.min(1, e.stateTime / 0.65) * 0.18 : 0
   e.legs.forEach((leg) => {
@@ -650,23 +747,39 @@ function updateThornback(e, player, dt) {
   e.group.position.y = groundHeight(e.group.position.x, e.group.position.z)
 }
 
-function updateSentinel(e, player, dt) {
+function setSentinelHeight(e, groundY, height) {
+  e.group.position.y = groundY + height
+  e.slamRing.position.y = 0.3 - height
+  e.jumpShadow.position.y = 0.04 - height
+  e.jumpShadow.scale.setScalar(1 - height / SENTINEL_JUMP_HEIGHT * 0.45)
+  e.jumpShadowMat.opacity = 0.24 - height / SENTINEL_JUMP_HEIGHT * 0.1
+}
+
+function updateSentinel(e, player, dt, patrolOnly) {
   const ppos = player.group.position
   const to = ppos.clone().sub(e.group.position).setY(0)
-  const dist = to.length()
+  const dist = patrolOnly ? Infinity : to.length()
   e.stateTime += dt
   e.cooldown = Math.max(0, e.cooldown - dt)
   const pulse = 1 + Math.sin(elapsed * 3 + e.id) * 0.12
+  const slamCharge = e.state === 'windup' ? Math.min(1, e.stateTime / SENTINEL_WINDUP) : e.state === 'leap' || e.state === 'slam' ? 1 : 0
   e.core.scale.setScalar(pulse)
-  e.coreHalo.scale.setScalar(0.9 + pulse * 0.18)
-  e.coreLight.intensity = 0.35 + pulse * 0.12 + (e.state === 'windup' ? Math.min(1, e.stateTime / 0.9) : 0) * 0.8
+  e.coreHalo.scale.setScalar(0.9 + pulse * 0.18 + slamCharge * 0.35)
+  e.coreLight.intensity = 0.35 + pulse * 0.12 + slamCharge * 0.8
   e.wisps.forEach((wisp, i) => {
     const a = elapsed * (0.65 + i * 0.035) + wisp.userData.seed
-    wisp.position.set(Math.cos(a) * (0.82 + i * 0.035), 1.15 + Math.sin(a * 1.7) * 0.55, Math.sin(a) * (0.82 + i * 0.035))
+    const airborne = e.state === 'leap' || e.state === 'slam'
+    const radius = airborne ? 0.52 + i * 0.02 : 0.82 + i * 0.035
+    wisp.position.set(Math.cos(a) * radius, 1.15 + Math.sin(a * 1.7) * (airborne ? 0.32 : 0.55), Math.sin(a) * radius)
+    wisp.scale.set(airborne ? 0.8 : 1, e.state === 'slam' ? 2.8 : 1, airborne ? 0.8 : 1)
   })
   if (e.state === 'stalk') {
     e.slamRing.visible = false
-    const walking = dist < 9 && dist > 3.4
+    e.slamRing.position.y = 0.3
+    e.jumpShadow.visible = false
+    e.impactBurst.visible = false
+    const chasing = dist < 9 && dist > 3.4
+    const walking = chasing || (dist >= 9 && updatePatrol(e, dt, 0.7))
     const gait = elapsed * 5.8
     e.upperBody.position.y = walking ? Math.abs(Math.sin(gait)) * 0.06 : Math.sin(elapsed * 1.6 + e.id) * 0.025
     e.upperBody.rotation.x = walking ? 0.045 : 0
@@ -683,70 +796,137 @@ function updateSentinel(e, player, dt) {
       arm.rotation.z = side * 0.22
       forearm.rotation.z = -side * 0.35
     })
-    if (walking) {
+    if (chasing) {
       e.group.position.addScaledVector(to.normalize(), 1.15 * dt)
       e.group.rotation.y = Math.atan2(to.x, to.z)
     }
     if (dist < 4.5 && e.cooldown <= 0) {
       e.state = 'windup'
       e.stateTime = 0
+      e.attackHit = false
     }
   } else if (e.state === 'windup') {
-    const t = Math.min(1, e.stateTime / 0.9)
+    const t = Math.min(1, e.stateTime / SENTINEL_WINDUP)
     e.mat.emissive.setHex(0x174b40)
     e.slamRing.visible = true
-    e.slamRing.scale.setScalar(0.2 + t * 0.8)
-    e.slamRing.rotation.y += dt * 0.8
+    e.slamRing.position.y = 0.3
+    e.jumpShadow.visible = true
+    e.jumpShadow.position.y = 0.04
+    e.jumpShadow.scale.setScalar(1)
+    e.jumpShadowMat.opacity = 0.24
+    e.slamRing.scale.setScalar(0.25 + t * 0.75)
+    e.slamRing.rotation.y += dt * (0.8 + t * 1.6)
     e.slamMats[0].opacity = 0.22 + t * 0.55
     e.slamMats[1].opacity = 0.12 + t * 0.5
-    e.upperBody.position.y = Math.sin(t * Math.PI) * 0.28
-    e.upperBody.rotation.x = 0
+    e.upperBody.position.y = -0.22 * Math.sin(t * Math.PI / 2)
+    e.upperBody.rotation.x = -t * 0.12
     e.legs.forEach(({ hip, knee, ankle }) => {
-      hip.rotation.x = 0
-      knee.rotation.x = 0.08 + t * 0.2
-      ankle.rotation.x = -knee.rotation.x
+      hip.rotation.x = -t * 0.16
+      knee.rotation.x = 0.08 + t * 0.74
+      ankle.rotation.x = -0.08 - t * 0.48
     })
     e.arms.forEach(({ arm, forearm, side }) => {
       arm.rotation.x = 0
-      arm.rotation.z = side * (0.22 + t * 2.1)
-      forearm.rotation.z = -side * (0.35 + t * 0.55)
+      arm.rotation.z = side * (0.22 + t * 2.2)
+      forearm.rotation.z = -side * (0.35 + t * 0.65)
     })
     if (t >= 1) {
-      if (dist < 3.4) hurtPlayer(player, 28, e.group.position)
+      e.state = 'leap'
+      e.stateTime = 0
+    }
+  } else if (e.state === 'leap') {
+    const t = Math.min(1, e.stateTime / SENTINEL_LEAP)
+    const height = SENTINEL_JUMP_HEIGHT * (1 - (1 - t) ** 3)
+    setSentinelHeight(e, groundHeight(e.group.position.x, e.group.position.z), height)
+    e.slamRing.visible = true
+    e.jumpShadow.visible = true
+    e.slamRing.scale.setScalar(1 + Math.sin(t * Math.PI) * 0.06)
+    e.slamRing.rotation.y += dt * 2.4
+    e.mat.emissive.setHex(0x174b40)
+    e.upperBody.position.y = 0.08 + Math.sin(t * Math.PI) * 0.14
+    e.upperBody.rotation.x = -0.12 * (1 - t)
+    e.legs.forEach(({ hip, knee, ankle }) => {
+      hip.rotation.x = -0.2
+      knee.rotation.x = 0.82 + Math.sin(t * Math.PI) * 0.42
+      ankle.rotation.x = -0.62
+    })
+    e.arms.forEach(({ arm, forearm, side }) => {
+      arm.rotation.x = -0.12
+      arm.rotation.z = side * 2.68
+      forearm.rotation.z = -side * 1.05
+    })
+    if (t >= 1) {
+      e.state = 'slam'
+      e.stateTime = 0
+    }
+  } else if (e.state === 'slam') {
+    const t = Math.min(1, e.stateTime / SENTINEL_DROP)
+    const height = SENTINEL_JUMP_HEIGHT * (1 - t * t)
+    const groundY = groundHeight(e.group.position.x, e.group.position.z)
+    setSentinelHeight(e, groundY, height)
+    e.slamRing.rotation.y += dt * 4
+    e.mat.emissive.setHex(0x174b40)
+    e.upperBody.position.y = 0.08 - t * 0.24
+    e.upperBody.rotation.x = t * 0.38
+    e.legs.forEach(({ hip, knee, ankle }) => {
+      hip.rotation.x = -0.2 + t * 0.12
+      knee.rotation.x = 1.05 - t * 0.48
+      ankle.rotation.x = -0.62 + t * 0.3
+    })
+    e.arms.forEach(({ arm, forearm, side }) => {
+      arm.rotation.x = t * 0.28
+      arm.rotation.z = side * (2.68 - t * 1.5)
+      forearm.rotation.z = -side * (1.05 - t * 0.35)
+    })
+    if (t >= 1) {
+      e.group.position.y = groundY
+      e.slamRing.position.y = 0.3
+      e.jumpShadow.visible = false
+      if (!e.attackHit && dist < SENTINEL_SLAM_RADIUS) hurtPlayer(player, 28, e.group.position)
+      e.attackHit = true
+      player.shake = Math.max(player.shake ?? 0, 0.55)
       e.state = 'recover'
       e.stateTime = 0
-      e.upperBody.position.y = 0
+      e.impactBurst.visible = true
       e.mat.emissive.setHex(0x000000)
     }
   } else if (e.state === 'recover') {
     const impact = Math.min(1, e.stateTime / 0.5)
+    const settle = Math.min(1, e.stateTime / 0.8)
     e.slamRing.visible = impact < 1
     e.slamRing.scale.setScalar(1 + impact * 0.45)
     e.slamMats[0].opacity = 0.77 * (1 - impact)
     e.slamMats[1].opacity = 0.62 * (1 - impact)
-    e.upperBody.rotation.x = 0
+    e.impactBurst.visible = impact < 1
+    e.impactBurst.scale.setScalar(0.45 + impact * 1.8)
+    e.impactBurst.position.y = 0.05 + impact * 0.35
+    e.impactBurstMat.opacity = 0.85 * (1 - impact)
+    const baseScale = e.group.scale.x
+    const squash = 1 - Math.min(1, e.stateTime / 0.28)
+    e.group.scale.set(baseScale * (1 + squash * 0.15), baseScale * (1 - squash * 0.28), baseScale * (1 + squash * 0.15))
+    e.upperBody.position.y = -0.16 * (1 - settle)
+    e.upperBody.rotation.x = 0.38 * (1 - settle)
     e.legs.forEach(({ hip, knee, ankle }) => {
-      const settle = Math.min(1, e.stateTime / 0.65)
-      hip.rotation.x = 0
-      knee.rotation.x = 0.28 - settle * 0.2
+      hip.rotation.x = -0.08 * (1 - settle)
+      knee.rotation.x = 0.82 - settle * 0.74
       ankle.rotation.x = -knee.rotation.x
     })
     e.arms.forEach(({ arm, forearm, side }) => {
-      const settle = Math.min(1, e.stateTime / 0.65)
-      arm.rotation.x = 0
-      arm.rotation.z = side * (2.32 - settle * 2.1)
-      forearm.rotation.z = -side * (0.9 - settle * 0.55)
+      arm.rotation.x = 0.28 * (1 - settle)
+      arm.rotation.z = side * (1.18 - settle * 0.96)
+      forearm.rotation.z = -side * (0.7 - settle * 0.35)
     })
     if (e.stateTime >= 1) {
       e.state = 'stalk'
       e.stateTime = 0
       e.cooldown = 0.8
+      e.impactBurst.visible = false
     }
   }
-  e.group.position.y = groundHeight(e.group.position.x, e.group.position.z)
+  if (e.state !== 'leap' && e.state !== 'slam') e.group.position.y = groundHeight(e.group.position.x, e.group.position.z)
 }
 
-export function updateEnemies(scene, player, dt) {
+export function updateEnemies(scene, player, dt, patrolOnly = false) {
   elapsed += dt
   const ppos = player.group.position
 
@@ -779,7 +959,7 @@ export function updateEnemies(scene, player, dt) {
     }
 
     // take sword hit
-    if (player.attackActive && !player.hitThisSwing.has(e.id) && inAttackArc(player, e.group.position)) {
+    if (!patrolOnly && player.attackActive && !player.hitThisSwing.has(e.id) && inAttackArc(player, e.group.position)) {
       player.hitThisSwing.add(e.id)
       applyHit(e, stats.damage * player.attackMult, ppos, player.attackMult > 1 ? 14 : 8)
       if (e.dying) continue
@@ -798,24 +978,24 @@ export function updateEnemies(scene, player, dt) {
     e.knockback.multiplyScalar(Math.max(0, 1 - dt * 8))
 
     if (e.type === 'boss') {
-      updateBoss(e, player, dt)
+      updateBoss(e, player, dt, patrolOnly)
       continue
     }
     if (e.type === 'thornback') {
-      updateThornback(e, player, dt)
+      updateThornback(e, player, dt, patrolOnly)
       continue
     }
     if (e.type === 'sentinel') {
-      updateSentinel(e, player, dt)
+      updateSentinel(e, player, dt, patrolOnly)
       continue
     }
     if (e.type === 'warden') {
-      updateWarden(e, player, dt)
+      updateWarden(e, player, dt, patrolOnly)
       continue
     }
 
     // hop toward player when aggroed
-    const dist = e.group.position.distanceTo(ppos)
+    const dist = patrolOnly ? Infinity : e.group.position.distanceTo(ppos)
     if (e.hopping) {
       e.hopTime += dt
       const t = e.hopTime / 0.45
@@ -825,16 +1005,22 @@ export function updateEnemies(scene, player, dt) {
       } else {
         e.body.position.y = 0.35 + Math.sin(t * Math.PI) * 0.5
         e.body.scale.y = 0.7 + Math.sin(t * Math.PI) * 0.15 // stretches mid-hop
-        const dir = ppos.clone().sub(e.group.position).setY(0).normalize()
-        e.group.position.addScaledVector(dir, 4 * dt)
-        e.group.rotation.y = Math.atan2(dir.x, dir.z)
-        resolveCircle(e.group.position, 0.5)
+        const dir = e.hopDir
+        if (e.patrolHop) {
+          if (!movePatrol(e, dir, 4 * dt)) e.hopping = false
+        } else {
+          e.group.position.addScaledVector(dir, 4 * dt)
+          e.group.rotation.y = Math.atan2(dir.x, dir.z)
+          resolveCircle(e.group.position, 0.5)
+        }
       }
     } else if (dist < AGGRO_RANGE) {
       const wob = Math.sin(elapsed * 3 + e.seed) * 0.04 // idle jelly wobble
       e.body.scale.set(1 + wob, 0.7 - wob * 1.3, 1 + wob)
       e.hopTimer -= dt
       if (e.hopTimer <= 0) {
+        e.hopDir.copy(ppos).sub(e.group.position).setY(0).normalize()
+        e.patrolHop = false
         e.hopping = true
         e.hopTime = 0
         e.hopTimer = 0.9
@@ -842,6 +1028,17 @@ export function updateEnemies(scene, player, dt) {
     } else {
       const wob = Math.sin(elapsed * 3 + e.seed) * 0.04
       e.body.scale.set(1 + wob, 0.7 - wob * 1.3, 1 + wob)
+      e.hopTimer -= dt
+      if (e.hopTimer <= 0) {
+        const dir = patrolDirection(e, dt)
+        if (dir) {
+          e.hopDir.copy(dir)
+          e.patrolHop = true
+          e.hopping = true
+          e.hopTime = 0
+          e.hopTimer = 0.9
+        }
+      }
     }
 
     e.group.position.y = groundHeight(e.group.position.x, e.group.position.z)
@@ -1029,6 +1226,19 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   const shrine = { x: 0, z: 0 }
   if (enemyReturnsAtShrine({ x: 20, z: 0, respawn: false }, shrine) || !enemyReturnsAtShrine({ x: 20, z: 0, respawn: true }, shrine)) throw new Error('Quest enemies must stay dead while distant roaming enemies return')
   const scene = { add() {}, remove() {} }
+  const patrol = { group: new THREE.Group(), ...createPatrol(0, 0) }
+  patrol.patrolWait = 0
+  patrol.patrolTarget.set(1, 0)
+  if (!updatePatrol(patrol, 0.25, 1) || patrol.group.position.x <= 0) throw new Error('Idle enemies must move toward a nearby patrol point')
+  patrol.group.position.set(0, 0, 0)
+  patrol.patrolTarget.set(2, 0)
+  const blocker = addCollider(1, 0, 0.25)
+  if (isCirclePathClear(0, 0, 2, 0, patrol.patrolBodyRadius) || updatePatrol(patrol, 0.5, 1) || patrol.patrolWait <= 0) throw new Error('Patrols must reject and abandon routes blocked by world colliders')
+  blocker.remove()
+  patrol.group.position.set(1, 0, 0)
+  patrol.patrolTarget.set(1, 0)
+  patrol.patrolWait = 0
+  if (updatePatrol(patrol, 0.016, 1) || patrol.patrolWait <= 0) throw new Error('Patrolling enemies must pause after reaching a patrol point')
   spawnSlime(scene, 20, 0)
   const firstId = enemies[0].id
   respawnEnemies(shrine)
@@ -1057,6 +1267,22 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   sentinel.stateTime = 0.44
   updateSentinel(sentinel, nearbyPlayer, 0.01)
   if (sentinel.state !== 'windup' || !sentinel.slamRing.visible || Math.abs(sentinel.arms[0].arm.rotation.z) < 1) throw new Error('Drowned Sentinel must raise its arms inside a visible layered slam telegraph')
+  sentinel.stateTime = SENTINEL_WINDUP - 0.01
+  updateSentinel(sentinel, nearbyPlayer, 0.02)
+  if (sentinel.state !== 'leap') throw new Error('Runic Slam must launch after its ground telegraph')
+  sentinel.stateTime = SENTINEL_LEAP * 0.5
+  updateSentinel(sentinel, nearbyPlayer, 0.01)
+  if (sentinel.group.position.y < 3 || sentinel.legs[0].knee.rotation.x < 0.8 || Math.abs(sentinel.group.position.y + sentinel.jumpShadow.position.y - 0.04) > 0.01) throw new Error('Runic Slam must visibly rise while its contact shadow stays on the ground')
+  sentinel.stateTime = SENTINEL_LEAP - 0.01
+  updateSentinel(sentinel, nearbyPlayer, 0.02)
+  const apex = sentinel.group.position.y
+  sentinel.stateTime = SENTINEL_DROP * 0.5
+  updateSentinel(sentinel, nearbyPlayer, 0.01)
+  if (sentinel.state !== 'slam' || sentinel.group.position.y >= apex) throw new Error('Runic Slam must accelerate back toward the ground')
+  sentinel.stateTime = SENTINEL_DROP - 0.01
+  const safePlayer = { group: { position: new THREE.Vector3(10, 0, 0) }, invulnerable: true, shake: 0 }
+  updateSentinel(sentinel, safePlayer, 0.02)
+  if (sentinel.state !== 'recover' || !sentinel.impactBurst.visible || safePlayer.shake < 0.5) throw new Error('Runic Slam landing must create a heavy area-impact reaction')
   const bossScene = new THREE.Scene()
   spawnAshKnight(bossScene, 8, -87)
   const boss = enemies.at(-1)
@@ -1067,5 +1293,5 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   if (boss.state !== 'recover') throw new Error('Ash Knight recovery must remain punishable for 1.25 seconds')
   updateBoss(boss, { group: { position: new THREE.Vector3(15, 0, -87) } }, 0.02)
   if (boss.state !== 'idle') throw new Error('Ash Knight must resume attacking after its recovery window')
-  console.log('Enemy check passed: boss cycle, respawns, Thornback gait, and articulated Sentinel locomotion/effects.')
+  console.log('Enemy check passed: obstacle-aware patrols, Runic Slam leap/impact, boss cycle, respawns, and articulated locomotion.')
 }

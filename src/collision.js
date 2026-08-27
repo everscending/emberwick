@@ -8,6 +8,18 @@ export function addCollider(x, z, r) {
   return { remove: () => circles.splice(circles.indexOf(c), 1) }
 }
 
+export function isCirclePathClear(fromX, fromZ, toX, toZ, radius) {
+  const dx = toX - fromX
+  const dz = toZ - fromZ
+  const lengthSq = dx * dx + dz * dz
+  return circles.every((c) => {
+    const t = lengthSq ? Math.max(0, Math.min(1, ((c.x - fromX) * dx + (c.z - fromZ) * dz) / lengthSq)) : 0
+    const gapX = c.x - (fromX + dx * t)
+    const gapZ = c.z - (fromZ + dz * t)
+    return gapX * gapX + gapZ * gapZ >= (c.r + radius) ** 2
+  })
+}
+
 export function resolveCircle(pos, radius) {
   for (const c of circles) {
     const dx = pos.x - c.x

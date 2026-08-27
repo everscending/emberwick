@@ -25,7 +25,7 @@ import { createShrine, scatterEnvironment, updateWorld, createAmbient, updateAmb
 import { createHelpUI, toggleHelp, isHelpOpen } from './help.js'
 import { createEndingUI, showEnding, isEndingOpen } from './ending.js'
 import { createDamageDebugUI, toggleDamageDebug, isDamageDebugOpen, updateDamageDebug } from './debugfx.js'
-import { createTitleScreen, isTitleOpen, readSave, writeSave, clearSave } from './save.js'
+import { createTitleScreen, isTitleOpen, readSave, writeSave, clearSave, titleTourState } from './save.js'
 
 const uiConfirmSound = new Audio('/assets/audio/ui-confirm.mp3')
 uiConfirmSound.preload = 'auto'
@@ -266,6 +266,10 @@ function startGame(saved, resetSave) {
 }
 
 createTitleScreen(readSave(), startGame)
+const titleBlendCanvas = document.createElement('canvas')
+titleBlendCanvas.className = 'scene-blend'
+document.getElementById('title-screen').prepend(titleBlendCanvas)
+const titleBlendContext = titleBlendCanvas.getContext('2d')
 setInterval(persist, 5000)
 addEventListener('beforeunload', persist)
 document.addEventListener('visibilitychange', () => { if (document.hidden) persist() })
@@ -285,6 +289,45 @@ window.EW = { player }
 
 // --- loop ---
 const clock = new THREE.Clock()
+const titleFocus = new THREE.Vector3()
+let titleStopIndex = -1
+let pendingTitleView = null
+
+function applyTitleCamera({ stop, pan }) {
+  const panX = stop.x + stop.panX * (pan - 0.5)
+  const panZ = stop.z + stop.panZ * (pan - 0.5)
+  const baseY = groundHeight(stop.x, stop.z)
+  camera.position.set(stop.x + stop.cameraX, baseY + stop.cameraY, stop.z + stop.cameraZ)
+  camera.lookAt(panX, groundHeight(panX, panZ) + 1.2, panZ)
+  titleFocus.set(stop.x, baseY, stop.z)
+}
+
+function updateTitleCamera(time) {
+  const view = titleTourState(time)
+  if (titleStopIndex < 0) applyTitleCamera(view)
+  else if (view.index !== titleStopIndex) pendingTitleView = view
+  else if (!pendingTitleView) applyTitleCamera(view)
+  const { index } = view
+  titleStopIndex = index
+  return titleFocus
+}
+
+function blendTitleScene() {
+  const source = renderer.domElement
+  titleBlendCanvas.width = source.width
+  titleBlendCanvas.height = source.height
+  titleBlendContext.drawImage(source, 0, 0, source.width, source.height)
+  titleBlendCanvas.style.transition = 'none'
+  titleBlendCanvas.style.opacity = '1'
+  titleBlendCanvas.getBoundingClientRect()
+  applyTitleCamera(pendingTitleView)
+  pendingTitleView = null
+  requestAnimationFrame(() => {
+    if (!titleBlendCanvas.isConnected) return
+    titleBlendCanvas.style.transition = 'opacity 1.5s linear'
+    titleBlendCanvas.style.opacity = '0'
+  })
+}
 
 function tick() {
   const rawDt = Math.min(clock.getDelta(), 0.05)
@@ -331,8 +374,11 @@ function tick() {
   }
   if (menuChanged) playUiConfirm()
 
-  if (isTitleOpen()) {
+  const titleOpen = isTitleOpen()
+  if (!titleOpen) pendingTitleView = null
+  if (titleOpen) {
     hidePrompt()
+    updateEnemies(scene, player, dt, true)
   } else if (isDamageDebugOpen()) {
     hidePrompt()
     updatePlayer(player, dt)
@@ -354,9 +400,10 @@ function tick() {
       updateInteract(player)
     }
   }
+  const viewFocus = titleOpen ? updateTitleCamera(clock.elapsedTime) : player.group.position
   updateDialogue(dt)
   updateWorld(clock.elapsedTime)
-  updateAmbient(clock.elapsedTime, player.group.position.x, player.group.position.z)
+  updateAmbient(clock.elapsedTime, viewFocus.x, viewFocus.z)
   water.position.y = WATER_LEVEL + Math.sin(clock.elapsedTime * 0.7) * 0.03 // gentle lapping
   water.material.color.lerp(questState.shards >= 2 ? waterWarm : waterCold, 0.025)
   water.material.emissive.lerp(questState.shards >= 2 ? waterEmissiveWarm : waterEmissiveCold, 0.025)
@@ -370,19 +417,22 @@ function tick() {
   updateMinimap(player, clock.elapsedTime)
   updateHUD(stats)
 
-  sun.position.copy(player.group.position).add(new THREE.Vector3(20, 30, 10))
-  sun.target.position.copy(player.group.position)
+  sun.position.copy(viewFocus).add(new THREE.Vector3(20, 30, 10))
+  sun.target.position.copy(viewFocus)
 
-  const camOff = closeCam ? CAM_OFFSET.clone().multiplyScalar(0.4) : CAM_OFFSET
-  camera.position.copy(player.group.position).add(camOff)
-  camera.lookAt(player.group.position)
-  if (player.shake > 0) {
-    camera.position.x += (Math.random() - 0.5) * player.shake
-    camera.position.y += (Math.random() - 0.5) * player.shake
-    player.shake = Math.max(0, player.shake - rawDt * 0.9)
+  if (!titleOpen) {
+    const camOff = closeCam ? CAM_OFFSET.clone().multiplyScalar(0.4) : CAM_OFFSET
+    camera.position.copy(player.group.position).add(camOff)
+    camera.lookAt(player.group.position)
+    if (player.shake > 0) {
+      camera.position.x += (Math.random() - 0.5) * player.shake
+      camera.position.y += (Math.random() - 0.5) * player.shake
+      player.shake = Math.max(0, player.shake - rawDt * 0.9)
+    }
   }
 
   composer.render()
+  if (titleOpen && pendingTitleView) blendTitleScene()
   endFrame()
   requestAnimationFrame(tick)
 }

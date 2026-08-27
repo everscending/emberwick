@@ -6,8 +6,8 @@ import { groundHeight, groundSlope } from './ground.js'
 
 // Instanced vegetation with GPU wind. Each archetype is a few instanced part
 // meshes (one draw call per part, any number of trees). Wind bends vertices in
-// the shader — amplitude grows with height, phase comes from world position so
-// trees sway out of step.
+// the shader — rigid trunks use normal toon materials while foliage, grass,
+// and flowers sway out of step.
 
 const windMats = []
 
@@ -42,7 +42,7 @@ const TYPES = {
   pine: {
     collider: 0.45,
     parts: [
-      { geo: cyl(0.12, 0.18, 0.6, 6).translate(0, 0.3, 0), color: 0x5a4030, amp: 0.004 },
+      { geo: cyl(0.12, 0.18, 0.6, 6).translate(0, 0.3, 0), color: 0x5a4030, amp: 0 },
       { geo: cone(0.72, 1.0, 7).translate(0, 1.0, 0), color: 0x2e5d34, amp: 0.02 },
       { geo: cone(0.55, 0.9, 7).translate(0, 1.65, 0), color: 0x35714b, amp: 0.028 },
       { geo: cone(0.36, 0.75, 7).translate(0, 2.25, 0), color: 0x3f7d52, amp: 0.036 },
@@ -51,7 +51,7 @@ const TYPES = {
   tall: {
     collider: 0.35,
     parts: [
-      { geo: cyl(0.1, 0.14, 1.1, 6).translate(0, 0.55, 0), color: 0x5a4030, amp: 0.004 },
+      { geo: cyl(0.1, 0.14, 1.1, 6).translate(0, 0.55, 0), color: 0x5a4030, amp: 0 },
       { geo: cone(0.45, 1.5, 7).translate(0, 1.8, 0), color: 0x2c5a40, amp: 0.024 },
       { geo: cone(0.3, 1.1, 7).translate(0, 2.9, 0), color: 0x37704e, amp: 0.034 },
     ],
@@ -59,7 +59,7 @@ const TYPES = {
   blob: {
     collider: 0.5,
     parts: [
-      { geo: cyl(0.14, 0.2, 0.8, 6).translate(0, 0.4, 0), color: 0x5a4030, amp: 0.004 },
+      { geo: cyl(0.14, 0.2, 0.8, 6).translate(0, 0.4, 0), color: 0x5a4030, amp: 0 },
       { geo: sph(0.85).translate(0, 1.55, 0), color: 0x35714b, amp: 0.022 },
       { geo: sph(0.55).translate(0.42, 2.05, 0.2), color: 0x3f7d52, amp: 0.03 },
     ],
@@ -98,7 +98,7 @@ export function plantForest(scene, spots) {
   for (const [type, list] of Object.entries(byType)) {
     const def = TYPES[type]
     for (const p of def.parts) {
-      const mesh = new THREE.InstancedMesh(p.geo, windToon(p.color, p.amp), list.length)
+      const mesh = new THREE.InstancedMesh(p.geo, type === 'dead' || !p.amp ? toon(p.color) : windToon(p.color, p.amp), list.length)
       mesh.castShadow = true
       list.forEach((s, i) => {
         q.setFromAxisAngle(UP, s.rot)
