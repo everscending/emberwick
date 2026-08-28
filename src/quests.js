@@ -1,6 +1,7 @@
 import { gainXP, stats } from './player.js'
-import { XP_PER_ENEMY } from './progression.js'
+import { xpForEnemy } from './progression.js'
 import { addItem, hasItem } from './inventory.js'
+import { setJumpControlUnlocked } from './input.js'
 
 const shardPickupSoundUrl = '/assets/audio/zelda-item-2.mp3'
 const shardPickupSound = typeof Audio === 'undefined' ? null : new Audio(shardPickupSoundUrl)
@@ -20,7 +21,7 @@ export const questState = {
 
 export function onEnemyKilled(type) {
   if (type === 'slime') questState.slimesKilled++
-  gainXP(type === 'warden' ? 100 : XP_PER_ENEMY)
+  gainXP(xpForEnemy(type))
 }
 
 export function currentObjective() {
@@ -67,7 +68,7 @@ export function hermitDialogue() {
     stats.abilities.highJump = true
     return [
       { name: 'Hermit Fen', text: 'The shard chose you. Good. The road east is less certain — the bridge has mostly become a memory.' },
-      { name: 'Hermit Fen', text: 'Take these Pegasus Boots. They once belonged to a courier who considered roads a polite suggestion. Run at the gap, jump, and tuck. The boots will remember the rest.' },
+      { name: 'Hermit Fen', text: 'Take these Pegasus Boots. They once belonged to a courier who considered roads a polite suggestion. Run at the gap, jump, and tuck. The boots will remember the rest.', onComplete: () => setJumpControlUnlocked(true, true) },
       { text: 'Pegasus Boots acquired — High Jump unlocked. Press Space while moving.' },
     ]
   }
@@ -120,8 +121,9 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   onShardTaken()
   if (questState.q2 !== 2 || !currentObjective().includes('Hermit Fen')) throw new Error('First shard must send the player back to Fen')
   if (!millieDialogue()[0].text.includes('stones')) throw new Error('Millie must react to the first shard')
-  hermitDialogue()
+  const bootsDialogue = hermitDialogue()
   if (questState.q2 !== 3 || !hasItem('pegasusBoots') || !stats.abilities.highJump) throw new Error('Fen must unlock High Jump with the Pegasus Boots')
+  if (typeof bootsDialogue[1]?.onComplete !== 'function') throw new Error('Pegasus Boots button must animate with its acquisition message')
   if (currentObjectiveTarget().x !== 21) throw new Error('The broken-bridge objective must point to the safe west approach')
   if (!tamDialogue()[0].text.includes('broken bridge')) throw new Error('Tam must react to the Pegasus Boots')
   console.log('Pegasus Boots check passed: first shard leads back to Fen and unlocks High Jump.')

@@ -1,12 +1,34 @@
+const SKETCH_SEQUENCE = ['▲', '◆', '●']
+let sketchGlyphs = []
+
+export function setSketchGlyphs(glyphs = []) {
+  sketchGlyphs = SKETCH_SEQUENCE.filter(glyph => glyphs.includes(glyph))
+  if (open) render()
+}
+
+function sketchDescription(count) {
+  const known = Math.min(3, Math.max(0, count ?? 0))
+  const copied = new Set(sketchGlyphs.length ? sketchGlyphs : SKETCH_SEQUENCE.slice(0, known))
+  const sequence = SKETCH_SEQUENCE.map(glyph => copied.has(glyph) ? glyph : '?').join(' ')
+  return known === 3
+    ? `The ruin sequence: ${sequence}. The Keep will ask for all three.`
+    : `The ruin sequence so far: ${sequence}. Find ${known === 2 ? 'the remaining mural' : 'the remaining murals'}.`
+}
+
 const DEFS = {
   shard: { name: 'Ember Shard', desc: 'A fragment of the Great Ember. Warm as a heartbeat.' },
   pegasusBoots: { name: 'Pegasus Boots', desc: 'Old winged boots that remember how to cross where roads fail.' },
   rustedKey: { name: 'Rusted Key', desc: 'Old iron, teeth worn thin. Something in the village still answers to it.' },
   boneKey: { name: 'Bone Key', desc: 'Carved from something that walked. It hums near old doors.' },
-  sketch: { name: 'Mural Sketch', desc: 'The ruin sequence: ▲ ◆ ●. The Keep will ask for all three.' },
+  sketch: { name: 'Mural Sketch', desc: sketchDescription },
 }
 
 const items = {} // id -> count
+
+export function itemDescription(id, count) {
+  const desc = DEFS[id]?.desc
+  return typeof desc === 'function' ? desc(count) : desc
+}
 
 export function addItem(id, n = 1) {
   items[id] = (items[id] ?? 0) + n
@@ -27,6 +49,7 @@ export function inventorySnapshot() {
 
 export function restoreInventory(saved = {}) {
   for (const id of Object.keys(items)) delete items[id]
+  sketchGlyphs = []
   for (const [id, count] of Object.entries(saved)) {
     if (DEFS[id] && Number.isInteger(count) && count > 0) items[id] = Math.min(count, 99)
   }
@@ -66,7 +89,7 @@ function render() {
     .filter(([, n]) => n > 0)
     .map(([id, n]) => {
       const d = DEFS[id]
-      return `<div class="item"><div class="nm">${d.name}${n > 1 ? ` ×${n}` : ''}</div><div class="ds">${d.desc}</div></div>`
+      return `<div class="item"><div class="nm">${d.name}${n > 1 ? ` ×${n}` : ''}</div><div class="ds">${itemDescription(id, n)}</div></div>`
     })
     .join('')
   panel.innerHTML = `<div class="panel"><h2>Satchel</h2>${rows || '<div class="empty">Nothing but pocket lint and purpose.</div>'}<div class="hint">Tab ▸ close</div></div>`
@@ -80,4 +103,14 @@ export function toggleInventory() {
 
 export function isInventoryOpen() {
   return open
+}
+
+if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv[1]}`) {
+  setSketchGlyphs(['▲', '●'])
+  if (itemDescription('sketch', 2) !== 'The ruin sequence so far: ▲ ? ●. Find the remaining mural.') throw new Error('Mural Sketches must reveal the actual glyphs collected, even out of order')
+  setSketchGlyphs(['▲', '◆'])
+  if (itemDescription('sketch', 2) !== 'The ruin sequence so far: ▲ ◆ ?. Find the remaining mural.') throw new Error('Two Mural Sketches must not reveal the third ruin glyph')
+  setSketchGlyphs(SKETCH_SEQUENCE)
+  if (itemDescription('sketch', 3) !== 'The ruin sequence: ▲ ◆ ●. The Keep will ask for all three.') throw new Error('Three Mural Sketches must preserve the complete Keep sequence')
+  console.log('Inventory check passed: Mural Sketch glyphs reveal progressively.')
 }

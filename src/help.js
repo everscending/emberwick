@@ -14,6 +14,10 @@ const css = `
 #help ul { margin: 0; padding-left: 20px; color: #aab4cc; font-size: 13px; }
 #help button { float: right; margin-top: 16px; padding: 6px 12px; color: #e8e0cc; background: #2a2438; border: 1px solid #665533; border-radius: 4px; cursor: pointer; }
 #help button:hover, #help button:focus-visible { border-color: #ddaa44; outline: none; }
+#help-hint { position: fixed; left: 16px; bottom: 14px; color: #c9bda8; font: 13px Georgia, serif; text-shadow: 0 1px 4px #000; pointer-events: none; user-select: none; }
+#help-hint kbd { padding: 1px 5px; border: 1px solid #665533; border-radius: 3px; color: #ffe0a0; background: rgba(20,17,27,.8); font: 12px monospace; }
+body.title-open #help-hint { visibility: hidden; }
+@media (pointer: coarse) { #help-hint { display: none; } }
 `
 
 let panel, open = false
@@ -33,8 +37,8 @@ export function createHelpUI() {
     <div class="controls">
       <kbd>W A S D</kbd><span>Move</span>
       <kbd>Left click</kbd><span>Slash; click again quickly to continue the combo</span>
-      <kbd>Space</kbd><span>High Jump after receiving the Pegasus Boots; reveal the current dialogue sentence</span>
-      <kbd>Hold click</kbd><span>Charged Slash after reaching Level 3; hold after a normal swing</span>
+      <kbd>Space / Right click</kbd><span>High Jump after receiving the Pegasus Boots</span>
+      <kbd>Hold click</kbd><span>Charged Slash after reaching Level 4; hold after a normal swing</span>
       <kbd>Q</kbd><span>Drink an Ember Flask to restore 50 HP</span>
       <kbd>E</kbd><span>Interact, talk, or advance dialogue</span>
       <kbd>Tab</kbd><span>Open the satchel</span>
@@ -44,16 +48,21 @@ export function createHelpUI() {
     </div>
     <h3>Useful to know</h3>
     <ul>
-      <li>Enemies award 25 XP. Charged Slash unlocks at Level 3 (250 XP).</li>
+      <li>Slimes award 10 XP, Drowned Sentinels 20, and most other enemies 25. Charged Slash unlocks at Level 4 (300 XP).</li>
       <li>The objective appears at the top-right. Its gold marker pulses on the minimap.</li>
       <li>Hearth shrines heal you, refill flasks, and become your respawn point.</li>
-      <li>Praying at a shrine resets roaming enemies. The four quest slimes at the village well stay defeated.</li>
+      <li>Roaming enemies return after two minutes; praying at a shrine resets them sooner. The four quest slimes at the village well stay defeated.</li>
       <li>Return the first Ember Shard to Hermit Fen to receive the Pegasus Boots. High Jump can cross the broken bridge.</li>
     </ul>
     <button type="button">Close (? / Esc)</button>
   </div>`
   panel.querySelector('button').onclick = toggleHelp
   document.body.appendChild(panel)
+
+  const hint = document.createElement('div')
+  hint.id = 'help-hint'
+  hint.innerHTML = 'Press <kbd>?</kbd> for help'
+  document.body.appendChild(hint)
 }
 
 export function toggleHelp() {

@@ -1,4 +1,4 @@
-import { LEVEL_XP } from './progression.js'
+import { LEVEL_XP, MAX_LEVEL, levelReward } from './progression.js'
 
 const css = `
 #hud { position: fixed; top: 16px; left: 16px; font-family: monospace; user-select: none; }
@@ -69,12 +69,13 @@ export function updateHUD(stats) {
   }
 
   const floor = LEVEL_XP[stats.level - 1]
-  const ceiling = LEVEL_XP[stats.level] ?? LEVEL_XP[2]
-  xpFill.style.width = stats.level === 3 ? '100%' : `${((stats.xp - floor) / (ceiling - floor)) * 100}%`
-  xpText.textContent = stats.level === 3 ? 'Level 3 · Charged Slash mastered' : `Level ${stats.level} · ${stats.xp} / ${ceiling} XP`
+  const ceiling = LEVEL_XP[stats.level] ?? LEVEL_XP.at(-1)
+  const maxed = stats.level === MAX_LEVEL
+  xpFill.style.width = maxed ? '100%' : `${((stats.xp - floor) / (ceiling - floor)) * 100}%`
+  xpText.textContent = maxed ? `Level ${MAX_LEVEL} · Maximum` : `Level ${stats.level} · ${stats.xp} / ${ceiling} XP`
 
   if (stats.level > lastLevel) {
-    levelUpEl.textContent = stats.level === 2 ? 'Level 2 reached!' : 'Level 3 — Charged Slash unlocked!  Hold attack after a swing.'
+    levelUpEl.textContent = `Level ${stats.level} — ${levelReward(stats.level)}`
     levelUpEl.style.display = 'block'
     clearTimeout(levelUpTimer)
     levelUpTimer = setTimeout(() => (levelUpEl.style.display = 'none'), 3500)

@@ -9,6 +9,11 @@ const css = `
 #dlg .text { font-size: 17px; line-height: 1.4; min-height: 44px; }
 #dlg .text.mono { font-style: italic; color: #aab4cc; }
 #dlg .hint { text-align: right; font-size: 12px; color: #776; margin-top: 4px; }
+@media (pointer:coarse) and (orientation:landscape) {
+  #dlg { left:max(184px,calc(env(safe-area-inset-left) + 160px)); right:200px; bottom:max(16px,env(safe-area-inset-bottom));
+    width:auto; max-height:calc(100vh - 32px); box-sizing:border-box; transform:none; padding:10px 12px; overflow-y:auto; }
+  #dlg .text { min-height:38px; font-size:15px; line-height:1.3; }
+}
 `
 
 const CHARS_PER_SEC = 40
@@ -43,7 +48,7 @@ export function createDialogueUI() {
 
   box = document.createElement('div')
   box.id = 'dlg'
-  box.innerHTML = `<div class="name"></div><div class="text"></div><div class="hint">Space: reveal · E: next</div>`
+  box.innerHTML = `<div class="name"></div><div class="text"></div><div class="hint">E: next</div>`
   document.body.appendChild(box)
   nameEl = box.querySelector('.name')
   textEl = box.querySelector('.text')
@@ -104,6 +109,7 @@ export function updateDialogue(dt) {
 // Small runnable input check: `node src/dialogue.js`
 if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv[1]}`) {
   if (dialogueSound !== null) throw new Error('Node dialogue check must not create browser audio')
+  if (!css.includes('left:max(184px') || !css.includes('right:200px')) throw new Error('Mobile dialogue must leave space between movement controls and minimap')
   current = { text: 'Finish this sentence.' }
   textEl = { textContent: '' }
   revealed = 3

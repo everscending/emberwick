@@ -3,7 +3,7 @@ import { keys, pressed } from './input.js'
 import { toonRim as toon } from './materials.js'
 import { resolveCircle } from './collision.js'
 import { walkableHeight, applySlopeBlock, settleBridgeLanding } from './ground.js'
-import { LEVEL_XP, levelForXP } from './progression.js'
+import { MAX_XP, progressionForXP } from './progression.js'
 import { triggerHeroDamageFx, triggerHeroDeathFx } from './debugfx.js'
 
 export const stats = {
@@ -308,14 +308,18 @@ function spendStamina(p, cost) {
 }
 
 export function gainXP(amount) {
-  stats.xp = Math.min(stats.xp + amount, LEVEL_XP[2])
+  const previous = { hpMax: stats.hpMax, stamMax: stats.stamMax, flaskMax: stats.flaskMax }
+  stats.xp = Math.min(stats.xp + amount, MAX_XP)
   syncProgression()
+  stats.hp = Math.min(stats.hpMax, stats.hp + stats.hpMax - previous.hpMax)
+  stats.stam = Math.min(stats.stamMax, stats.stam + stats.stamMax - previous.stamMax)
+  stats.flasks = Math.min(stats.flaskMax, stats.flasks + stats.flaskMax - previous.flaskMax)
 }
 
 export function syncProgression() {
-  stats.level = levelForXP(stats.xp)
-  stats.damage = stats.level >= 2 ? 25 : 20
-  stats.abilities.charge = stats.level >= 3
+  const { charge, ...progression } = progressionForXP(stats.xp)
+  Object.assign(stats, progression)
+  stats.abilities.charge = charge
 }
 
 export function hurtPlayer(p, amount, fromPosition) {
@@ -495,7 +499,7 @@ export function updatePlayer(p, dt) {
       // quick follow-up alternates slash/chop; pausing resets to slash
       p.comboIndex = p.idleTime - p.lastAttackAt < 0.9 ? (p.comboIndex + 1) % 2 : 0
       p.lastAttackAt = p.idleTime
-    } else if (pressed('Space') && stats.abilities.highJump && spendStamina(p, HIGH_JUMP.cost)) {
+    } else if (pressed('Jump') && stats.abilities.highJump && spendStamina(p, HIGH_JUMP.cost)) {
       p.state = 'highJump'
       p.stateTime = 0
       p.actionDir.copy(move.lengthSq() > 0 ? move : p.facing)
@@ -818,5 +822,8 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   stats.xp = 150
   syncProgression()
   if (stats.level !== 2 || stats.damage !== 25) throw new Error('Level 2 must raise sword damage to 25')
+  stats.xp = MAX_XP
+  syncProgression()
+  if (stats.level !== 11 || stats.damage !== 40 || stats.hpMax !== 145 || stats.stamMax !== 145 || stats.speed !== 8.75 || stats.flaskMax !== 4 || !stats.abilities.charge) throw new Error('Level 11 boosts must sync to the player')
   console.log('Player death check passed: wobble, fall, and sound-gated shrine revival.')
 }

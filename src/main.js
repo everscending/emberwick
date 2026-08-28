@@ -8,8 +8,9 @@ import { updateFlora } from './flora.js'
 import { buildWorld, updateRegions, restoreGreatEmber } from './regions.js'
 import { createMinimap, updateMinimap } from './minimap.js'
 import { updateGates } from './gates.js'
-import { endFrame, pressed } from './input.js'
+import { endFrame, pressed, setJumpControlUnlocked } from './input.js'
 import { stats, createPlayer, updatePlayer, syncProgression } from './player.js'
+import { MAX_XP } from './progression.js'
 import { createHUD, updateHUD, setObjective } from './hud.js'
 import { createNPC, updateNPCs } from './npc.js'
 import { updateProps } from './props.js'
@@ -160,6 +161,11 @@ spawnSlime(scene, -11, 55, { respawn: false, questTarget: true })
 spawnSlime(scene, -3, 49, { respawn: false, questTarget: true })
 spawnSlime(scene, -14, 40) // stragglers on the road south
 spawnSlime(scene, -2, 38)
+// roaming slimes beyond the village's northern edge
+spawnSlime(scene, -12, -17)
+spawnSlime(scene, 14, -20)
+spawnSlime(scene, -18, -36)
+spawnSlime(scene, 12, -42)
 // three two-enemy encounters along the required route: forest mouth → Fen → circle
 spawnSlime(scene, -48, 8)
 spawnThornback(scene, -53, 14)
@@ -167,12 +173,24 @@ spawnSlime(scene, -62, 27)
 spawnThornback(scene, -68, 27)
 spawnThornback(scene, -80, -6)
 spawnSlime(scene, -78, -14)
+// scattered forest prowlers
+spawnSlime(scene, -43, -20)
+spawnThornback(scene, -56, -38)
+spawnSlime(scene, -66, 44)
+spawnThornback(scene, -88, 8)
+spawnSlime(scene, -94, -30)
 // ruins prowlers
 spawnSlime(scene, 52, 10)
 spawnDrownedSentinel(scene, 60, -12)
 spawnDrownedSentinel(scene, 74, -6)
 spawnSlime(scene, 64, 20)
 spawnDrownedSentinel(scene, 84, 8)
+spawnSlime(scene, 45, -22)
+spawnDrownedSentinel(scene, 48, 28)
+spawnSlime(scene, 70, -32)
+spawnDrownedSentinel(scene, 92, -28)
+spawnSlime(scene, 98, 2)
+spawnDrownedSentinel(scene, 96, 18)
 
 const whole = (value, fallback, min, max) => Number.isFinite(value) ? THREE.MathUtils.clamp(Math.round(value), min, max) : fallback
 const number = (value, fallback, min, max) => Number.isFinite(value) ? THREE.MathUtils.clamp(value, min, max) : fallback
@@ -192,12 +210,13 @@ function applyGameState(value) {
     questState[key] = whole(quests[key], questState[key], 0, max)
   }
 
-  stats.xp = whole(saved.stats?.xp, stats.xp, 0, 250)
+  stats.xp = whole(saved.stats?.xp, stats.xp, 0, MAX_XP)
   syncProgression()
   stats.hp = whole(saved.stats?.hp, stats.hpMax, 1, stats.hpMax)
   stats.stam = whole(saved.stats?.stam, stats.stamMax, 0, stats.stamMax)
   stats.flasks = whole(saved.stats?.flasks, stats.flaskMax, 0, stats.flaskMax)
   stats.abilities.highJump = Boolean(saved.stats?.abilities?.highJump) || questState.q2 === 3
+  setJumpControlUnlocked(stats.abilities.highJump)
 
   restoreInventory(object(saved.items))
   restorePosition(player.group.position, saved.player?.position)

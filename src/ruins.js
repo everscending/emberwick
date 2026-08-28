@@ -5,7 +5,7 @@ import { groundHeight } from './ground.js'
 import { addInteractable } from './interact.js'
 import { say } from './dialogue.js'
 import { questState, onShardTaken } from './quests.js'
-import { addItem } from './inventory.js'
+import { addItem, setSketchGlyphs } from './inventory.js'
 import { addTrigger } from './gates.js'
 
 // Sunken Ruins content: three story murals (each yields a Mural Sketch),
@@ -52,8 +52,99 @@ function part(geo, color, x = 0, y = 0, z = 0) {
   return m
 }
 
+const muralPanelMat = toon(0x343d38)
+const muralReliefMat = toon(0x8b9383)
+const muralShadowMat = toon(0x515b52)
+const muralAshMat = toon(0x252b29)
+const muralEmberMat = new THREE.MeshBasicMaterial({ color: 0xd88945 })
+
+function reliefPiece(root, geo, material, x, y, rotation = 0, z = 0.09) {
+  const mesh = new THREE.Mesh(geo, material)
+  mesh.position.set(x, y, z)
+  mesh.rotation.z = rotation
+  mesh.castShadow = true
+  root.add(mesh)
+  return mesh
+}
+
+function muralKnight(root, x, y, pose, material = muralReliefMat, facing = 1) {
+  reliefPiece(root, new THREE.SphereGeometry(0.14, 7, 6), material, x, y + 0.42, 0, 0.13)
+  reliefPiece(root, new THREE.BoxGeometry(0.12, 0.13, 0.08), material, x, y + 0.57, -facing * 0.28)
+  reliefPiece(root, new THREE.BoxGeometry(0.32, 0.48, 0.08), material, x, y + 0.1)
+  reliefPiece(root, new THREE.BoxGeometry(0.1, 0.38, 0.07), material, x + facing * 0.22, y + 0.16, -facing * 0.78)
+  reliefPiece(root, new THREE.BoxGeometry(0.1, 0.34, 0.07), material, x + facing * 0.3, y + 0.08, -facing * 1.02)
+  if (pose === 'walk') {
+    reliefPiece(root, new THREE.BoxGeometry(0.12, 0.44, 0.08), material, x - 0.13, y - 0.32, 0.55)
+    reliefPiece(root, new THREE.BoxGeometry(0.12, 0.44, 0.08), material, x + 0.13, y - 0.32, -0.55)
+  } else {
+    reliefPiece(root, new THREE.BoxGeometry(0.12, 0.42, 0.08), material, x - facing * 0.1, y - 0.3, -facing * 0.32)
+    reliefPiece(root, new THREE.BoxGeometry(0.12, 0.42, 0.08), material, x + facing * 0.12, y - 0.42, facing * 1.18)
+  }
+}
+
+function muralGlyphGeometry(glyph) {
+  if (glyph === '▲') return new THREE.CircleGeometry(0.25, 3, Math.PI / 2)
+  if (glyph === '◆') {
+    const geo = new THREE.PlaneGeometry(0.36, 0.36)
+    geo.rotateZ(Math.PI / 4)
+    return geo
+  }
+  return new THREE.RingGeometry(0.15, 0.25, 18)
+}
+
+function addMuralRelief(slab, mural, index) {
+  const root = new THREE.Group()
+  root.position.z = 0.22
+  slab.add(root)
+  reliefPiece(root, new THREE.BoxGeometry(2.55, 1.88, 0.07), muralPanelMat, 0, 0, 0, 0)
+  reliefPiece(root, new THREE.BoxGeometry(2.72, 0.11, 0.11), muralReliefMat, 0, 0.97)
+  reliefPiece(root, new THREE.BoxGeometry(2.72, 0.11, 0.11), muralReliefMat, 0, -0.97)
+  reliefPiece(root, new THREE.BoxGeometry(0.11, 1.94, 0.11), muralReliefMat, -1.33, 0)
+  reliefPiece(root, new THREE.BoxGeometry(0.11, 1.94, 0.11), muralReliefMat, 1.33, 0)
+  reliefPiece(root, new THREE.BoxGeometry(2.2, 0.035, 0.04), muralShadowMat, 0, -0.52, 0, 0.08)
+
+  if (index === 0) {
+    muralKnight(root, -0.52, 0.16, 'kneel')
+    reliefPiece(root, new THREE.BoxGeometry(0.48, 0.12, 0.08), muralReliefMat, 0.55, -0.05)
+    reliefPiece(root, new THREE.ConeGeometry(0.19, 0.5, 5), muralEmberMat, 0.55, 0.3, 0, 0.15)
+    reliefPiece(root, new THREE.SphereGeometry(0.08, 7, 5), new THREE.MeshBasicMaterial({ color: 0xffd47a }), 0.55, 0.19, 0, 0.18)
+  } else if (index === 1) {
+    muralKnight(root, -0.05, 0.13, 'walk')
+    reliefPiece(root, new THREE.SphereGeometry(0.11, 7, 5), muralEmberMat, 0.42, 0.38, 0, 0.15)
+    for (const side of [-1, 1]) {
+      reliefPiece(root, new THREE.CircleGeometry(0.1, 7), muralShadowMat, side * 0.88, 0.5)
+      reliefPiece(root, new THREE.BoxGeometry(0.25, 0.32, 0.06), muralShadowMat, side * 0.88, 0.22, side * 0.35)
+    }
+    for (let x = -0.85; x <= 0.85; x += 0.42) reliefPiece(root, new THREE.BoxGeometry(0.24, 0.06, 0.05), muralShadowMat, x, -0.37, x * 0.2)
+  } else {
+    reliefPiece(root, new THREE.RingGeometry(0.56, 0.62, 20), muralShadowMat, 0, 0.12)
+    muralKnight(root, -0.18, 0.1, 'kneel', muralAshMat)
+    reliefPiece(root, new THREE.ConeGeometry(0.12, 0.3, 5), muralEmberMat, 0.48, 0.28, 0, 0.15)
+    for (const [x, scale] of [[-0.78, 0.1], [-0.48, 0.07], [0.2, 0.08], [0.78, 0.11]]) {
+      reliefPiece(root, new THREE.CircleGeometry(scale, 6), muralShadowMat, x, -0.38 + scale)
+    }
+  }
+
+  const glyphMaterial = new THREE.MeshBasicMaterial({ color: 0x88ffcc })
+  reliefPiece(root, muralGlyphGeometry(mural.glyph), glyphMaterial, 0, -0.74, 0, 0.15)
+  const glyphLight = new THREE.PointLight(0x88ffcc, 0.45, 3)
+  glyphLight.position.set(0, -0.72, 0.5)
+  root.add(glyphLight)
+  mural.glyphMaterial = glyphMaterial
+  mural.glyphLight = glyphLight
+}
+
 const state = { orientations: [0, 0, 0], solved: false, murals: [false, false, false], arrivalSeen: false }
 let beamGroup
+
+const syncMuralSketches = () => setSketchGlyphs(MURALS.filter((_, i) => state.murals[i]).map(({ glyph }) => glyph))
+
+function updateMuralVisual(index) {
+  const color = state.murals[index] ? 0xffb45e : 0x88ffcc
+  MURALS[index].glyphMaterial?.color.setHex(color)
+  MURALS[index].glyphLight?.color.setHex(color)
+  if (MURALS[index].glyphLight) MURALS[index].glyphLight.intensity = state.murals[index] ? 0.75 : 0.45
+}
 
 export function setupRuins(scene) {
   // arrival beat
@@ -73,21 +164,20 @@ export function setupRuins(scene) {
   // murals
   MURALS.forEach((m, i) => {
     const gy = groundHeight(m.x, m.z)
-    const slab = part(new THREE.BoxGeometry(2.4, 2.0, 0.35), 0x6e7a68, m.x, gy + 1.0, m.z)
-    slab.rotation.y = Math.atan2(70 - m.x, 8 - m.z) // face the heart of the ruins
+    const slab = part(new THREE.BoxGeometry(3.0, 2.35, 0.38), 0x6e7a68, m.x, gy + 1.18, m.z)
+    slab.rotation.y = Math.PI / 4 // present every relief toward the fixed isometric camera
+    addMuralRelief(slab, m, i)
     scene.add(slab)
-    addCollider(m.x, m.z, 1.3)
-    const glyph = new THREE.Mesh(new THREE.CircleGeometry(0.22, 12), new THREE.MeshBasicMaterial({ color: 0x88ffcc }))
-    glyph.position.set(m.x, gy + 1.1, m.z)
-    glyph.rotation.y = slab.rotation.y
-    glyph.translateZ(0.19)
-    scene.add(glyph)
+    addCollider(m.x, m.z, 1.55)
+    updateMuralVisual(i)
     addInteractable({
       position: new THREE.Vector3(m.x, gy, m.z),
       prompt: 'Study the mural',
       onInteract: () => {
         if (!state.murals[i]) {
           state.murals[i] = true
+          updateMuralVisual(i)
+          syncMuralSketches()
           addItem('sketch')
         }
         say(m.lines)
@@ -211,6 +301,8 @@ export function restoreRuins(saved = {}, scene) {
   const orientations = Array.isArray(saved.orientations) ? saved.orientations : []
   state.orientations = MIRRORS.map((_, i) => Number.isInteger(orientations[i]) ? THREE.MathUtils.clamp(orientations[i], 0, 7) : 0)
   state.murals = MURALS.map((_, i) => Boolean(saved.murals?.[i]))
+  MURALS.forEach((_, i) => updateMuralVisual(i))
+  syncMuralSketches()
   state.arrivalSeen = Boolean(saved.arrivalSeen) || questState.q3 > 0
   state.solved = Boolean(saved.solved) || questState.q3 >= 2
   if (state.solved) state.orientations = MIRRORS.map(({ need }) => need)

@@ -14,6 +14,11 @@ const TITLE_STOPS = [
 ].sort(() => Math.random() - 0.5)
 const TITLE_STOP_SECONDS = 20
 const TITLE_BLEND_SECONDS = 1.5
+const TITLE_INTRO_MS = 3100
+
+function titleIntroDelay(reducedMotion) {
+  return reducedMotion ? 0 : TITLE_INTRO_MS
+}
 
 export function titleTourState(elapsed) {
   const leg = TITLE_STOP_SECONDS + TITLE_BLEND_SECONDS
@@ -58,9 +63,11 @@ export function createTitleScreen(saved, onStart) {
   const style = document.createElement('style')
   style.textContent = `
 #title-screen { position:fixed; inset:0; z-index:100; display:flex; align-items:center; justify-content:center;
-  overflow:hidden; color:#f2e5c8; background:transparent; font-family:Georgia,serif; }
+  overflow:hidden; color:#f2e5c8; background:#000; font-family:Georgia,serif;
+  animation:title-world-reveal 1.5s 1.45s ease-in-out forwards; }
 #title-screen .panel { position:relative; z-index:1; width:min(860px,94vw); text-align:center; }
-#title-screen .logo-lockup { position:relative; overflow:hidden; aspect-ratio:1280/410; margin:0; }
+#title-screen .logo-lockup { position:relative; overflow:hidden; aspect-ratio:1280/410; margin:0; opacity:0;
+  animation:title-logo-reveal 1.25s .15s ease-out forwards; }
 #title-screen .logo-image { position:absolute; inset:0; width:100%; transform:translateY(-21.25%); }
 #title-screen .title-flame { position:absolute; left:74.15%; top:34.5%; width:4.2%; aspect-ratio:.52;
   transform:translate(-50%,-100%); transform-origin:50% 100%; filter:drop-shadow(0 0 6px #ffb52e) drop-shadow(0 0 15px #ff4b16);
@@ -72,19 +79,29 @@ export function createTitleScreen(saved, onStart) {
   background:linear-gradient(#fff4a0,#fff 70%,#7bc7ff); filter:blur(.3px); animation:title-flame-core .18s infinite alternate ease-in-out; }
 #title-screen .title-sparks { position:absolute; left:74.15%; top:13%; width:3px; height:3px; border-radius:50%; background:#ffd36a;
   box-shadow:-8px 18px #ff8a27,7px 31px #ffc248; animation:title-sparks 1.4s infinite ease-out; }
-#title-screen .tagline { width:min(620px,90vw); margin:4px auto 26px; color:#e4d8e8; font-size:16px; text-shadow:0 2px 8px #000; }
-#title-screen .primary { display:grid; width:min(620px,90vw); margin:auto; gap:9px; }
+#title-screen .tagline { width:min(620px,90vw); margin:4px auto 26px; color:#e4d8e8; font-size:16px; text-shadow:0 2px 8px #000; opacity:0; transform:translateY(8px); }
+#title-screen .primary { display:grid; width:min(620px,90vw); margin:auto; gap:9px; opacity:0; transform:translateY(8px); pointer-events:none; }
 #title-screen .primary { grid-template-columns:1fr 1fr; }
+#title-screen.ready .tagline,#title-screen.ready .primary { animation:title-controls-reveal .7s ease-out forwards; }
+#title-screen.ready .primary { pointer-events:auto; }
 #title-screen button { min-height:44px; padding:9px 12px; color:#f2e5c8; background:#261b22; border:1px solid #8b6844; border-radius:5px; font:15px Georgia,serif; cursor:pointer; }
 #title-screen button:hover,#title-screen button:focus-visible { outline:none; border-color:#ffbd68; background:#38252a; }
 #title-screen button:disabled { opacity:.38; cursor:not-allowed; }
 body.title-open #hud,body.title-open #obj,body.title-open>canvas:not(:first-of-type) { visibility:hidden; }
 #title-screen .scene-blend { position:absolute; inset:0; width:100%; height:100%; opacity:0; pointer-events:none; }
+@keyframes title-logo-reveal { to { opacity:1; } }
+@keyframes title-world-reveal { to { background:rgba(0,0,0,0); } }
+@keyframes title-controls-reveal { to { opacity:1; transform:none; } }
 @keyframes title-flame-flicker { to { transform:translate(-50%,-100%) rotate(2deg) scale(.92,1.08); filter:drop-shadow(0 0 8px #ffd456) drop-shadow(0 0 18px #ff5217); } }
 @keyframes title-flame-shape { to { clip-path:polygon(54% 0,72% 30%,75% 51%,68% 78%,48% 100%,25% 88%,20% 61%,36% 34%); transform:skewX(-4deg); } }
 @keyframes title-flame-core { to { transform:translateX(10%) scale(.86,1.12); opacity:.86; } }
 @keyframes title-sparks { from { transform:translateY(42px) scale(1); opacity:0; } 18% { opacity:1; } to { transform:translate(5px,-18px) scale(.2); opacity:0; } }
-@media (prefers-reduced-motion:reduce) { #title-screen .title-flame,#title-screen .title-flame::before,#title-screen .title-flame::after,#title-screen .title-sparks { animation:none; } }
+@media (prefers-reduced-motion:reduce) {
+  #title-screen { animation:none; background:transparent; }
+  #title-screen .logo-lockup { animation:none; opacity:1; }
+  #title-screen.ready .tagline,#title-screen.ready .primary { animation:none; opacity:1; transform:none; }
+  #title-screen .title-flame,#title-screen .title-flame::before,#title-screen .title-flame::after,#title-screen .title-sparks { animation:none; }
+}
 @media (max-width:540px) { #title-screen .primary { grid-template-columns:1fr; } }
 `
   document.head.appendChild(style)
@@ -92,10 +109,10 @@ body.title-open #hud,body.title-open #obj,body.title-open>canvas:not(:first-of-t
   panel.id = 'title-screen'
   panel.setAttribute('role', 'dialog')
   panel.setAttribute('aria-modal', 'true')
-  panel.innerHTML = `<div class="panel"><h1 class="logo-lockup"><img class="logo-image" src="/assets/emberwick-logo-no-flame.png" alt="EMBERWICK"><span class="title-flame" aria-hidden="true"></span><span class="title-sparks" aria-hidden="true"></span></h1><div class="tagline">Carry the last warmth home.</div><div class="primary"><button data-choice="continue" ${saved ? '' : 'disabled'}>Continue</button><button data-choice="new">New Game</button></div></div>`
+  panel.innerHTML = `<div class="panel"><h1 class="logo-lockup"><img class="logo-image" src="/assets/emberwick-logo-no-flame.png" alt="EMBERWICK"><span class="title-flame" aria-hidden="true"></span><span class="title-sparks" aria-hidden="true"></span></h1><div class="tagline">Carry the last warmth home.</div><div class="primary"><button data-choice="continue" disabled>Continue</button><button data-choice="new" disabled>New Game</button></div></div>`
   document.body.classList.add('title-open')
   document.body.appendChild(panel)
-  panel.querySelectorAll('button:not(:disabled)').forEach((button) => {
+  panel.querySelectorAll('button').forEach((button) => {
     button.onclick = () => {
       const choice = button.dataset.choice
       panel.remove()
@@ -104,7 +121,15 @@ body.title-open #hud,body.title-open #obj,body.title-open>canvas:not(:first-of-t
       onStart(choice === 'continue' ? saved : null, choice !== 'continue')
     }
   })
-  panel.querySelector(saved ? '[data-choice="continue"]' : '[data-choice="new"]').focus()
+  const revealControls = () => {
+    panel.classList.add('ready')
+    panel.querySelector('[data-choice="continue"]').disabled = !saved
+    panel.querySelector('[data-choice="new"]').disabled = false
+    panel.querySelector(saved ? '[data-choice="continue"]' : '[data-choice="new"]').focus()
+  }
+  const delay = titleIntroDelay(globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+  if (delay) setTimeout(revealControls, delay)
+  else revealControls()
 }
 
 export function isTitleOpen() {
@@ -120,6 +145,6 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   const start = titleTourState(0)
   const blend = titleTourState(20)
   const next = titleTourState(21.5)
-  if (readSave(storage) !== null || start.stop === next.stop || blend.stop !== next.stop || blend.pan !== 0 || next.pan !== 0) throw new Error('Save fallback and title tour timing must remain stable')
+  if (readSave(storage) !== null || start.stop === next.stop || blend.stop !== next.stop || blend.pan !== 0 || next.pan !== 0 || titleIntroDelay(false) !== 3100 || titleIntroDelay(true) !== 0) throw new Error('Save fallback and title timing must remain stable')
   console.log(`Save check passed: storage fallback and ${TITLE_STOPS.length}-stop, 20-second title tour timing.`)
 }

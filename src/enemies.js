@@ -17,6 +17,11 @@ const SENTINEL_LEAP = 0.65
 const SENTINEL_DROP = 0.28
 const SENTINEL_JUMP_HEIGHT = 4.4
 const SENTINEL_SLAM_RADIUS = 3.4
+const BOSS_SLAM_LEAP = 0.68
+const BOSS_SLAM_DROP = 0.3
+const BOSS_JUMP_HEIGHT = 5
+const BOSS_ARENA_RADIUS = 5.6
+const RESPAWN_DELAY = 120
 
 const enemies = []
 const spawnPoints = []
@@ -87,9 +92,21 @@ function updatePatrol(e, dt, speed) {
 }
 
 function registerSpawn(type, scene, x, z, respawn, create, details = {}) {
-  const spawn = { type, scene, x, z, respawn, alive: true, ...details }
+  const spawn = { type, scene, x, z, respawn, create, alive: true, respawnAt: Infinity, ...details }
   spawnPoints.push(spawn)
   create(spawn)
+}
+
+function reviveSpawn(spawn) {
+  spawn.alive = true
+  spawn.respawnAt = Infinity
+  spawn.create(spawn)
+}
+
+function respawnExpiredEnemies() {
+  for (const spawn of spawnPoints) {
+    if (spawn.respawn && !spawn.alive && elapsed >= spawn.respawnAt) reviveSpawn(spawn)
+  }
 }
 
 export function spawnSlime(scene, x, z, { respawn = true, questTarget = false } = {}) {
@@ -147,6 +164,7 @@ function createSlime(spawn) {
 
   enemies.push({
     id: nextId++,
+    type: 'slime',
     group,
     body,
     mat,
@@ -164,7 +182,7 @@ function createSlime(spawn) {
     spawn,
     hopDir: new THREE.Vector3(),
     patrolHop: false,
-    ...createPatrol(x, z),
+    ...createPatrol(x, z, 6),
   })
 }
 
@@ -482,57 +500,212 @@ export function spawnGravewarden(scene, x, z) {
 
 export function spawnAshKnight(scene, x, z, onDefeat) {
   const group = new THREE.Group()
+  const upperBody = new THREE.Group()
+  group.add(upperBody)
   const mat = toon(0x292a33)
-  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.72, 1.35, 8), mat)
-  torso.position.y = 1.05
-  torso.castShadow = true
-  group.add(torso)
-
-  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.52, 10, 8), mat)
-  helmet.position.y = 2.05
-  helmet.scale.y = 1.15
-  helmet.castShadow = true
-  group.add(helmet)
-  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.22, 0.12), toon(0x17171d))
-  visor.position.set(0, 2.08, 0.46)
-  group.add(visor)
-  for (const ex of [-0.2, 0.2]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.055, 7, 6), new THREE.MeshBasicMaterial({ color: 0xff5522 }))
-    eye.position.set(ex, 2.08, 0.54)
-    group.add(eye)
+  const accentMat = toon(0x17171d)
+  const emberPlateMat = toon(0x4a2022)
+  const body = new THREE.Mesh(new THREE.DodecahedronGeometry(0.82, 1), mat)
+  body.position.y = 1.55
+  body.scale.set(1.12, 1.14, 0.76)
+  body.castShadow = true
+  upperBody.add(body)
+  const waist = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.68, 0.42, 10), accentMat)
+  waist.position.y = 0.9
+  upperBody.add(waist)
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.12, 7, 16), emberPlateMat)
+  collar.position.y = 2.12
+  collar.rotation.x = Math.PI / 2
+  upperBody.add(collar)
+  const head = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5, 1), mat)
+  head.position.y = 2.55
+  head.scale.set(1.05, 0.84, 0.9)
+  head.castShadow = true
+  upperBody.add(head)
+  const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.22, 0.42, 2, 1, 2), accentMat)
+  jaw.position.set(0, 2.31, 0.18)
+  upperBody.add(jaw)
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.17, 0.13), accentMat)
+  visor.position.set(0, 2.59, 0.43)
+  upperBody.add(visor)
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0xff5522 })
+  for (const ex of [-0.21, 0.21]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), glowMat)
+    eye.position.set(ex, 2.59, 0.51)
+    upperBody.add(eye)
   }
-  for (const sx of [-0.65, 0.65]) {
-    const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), mat)
-    shoulder.position.set(sx, 1.55, 0)
-    shoulder.scale.set(1.3, 0.75, 1)
-    group.add(shoulder)
+  for (const [cx, height, tilt] of [[-0.29, 0.48, -0.18], [0, 0.3, 0.12], [0.29, 0.56, 0.2]]) {
+    const crown = new THREE.Mesh(new THREE.ConeGeometry(0.13, height, 6), emberPlateMat)
+    crown.position.set(cx, 2.94 + height * 0.4, -0.03)
+    crown.rotation.z = tilt
+    upperBody.add(crown)
   }
-  const cape = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.65), toon(0x4a2022))
-  cape.position.set(0, 1.15, -0.48)
-  cape.rotation.x = -0.12
-  group.add(cape)
 
-  const swordPivot = new THREE.Group()
-  swordPivot.position.set(-0.68, 1.55, 0)
-  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, 2.0), toon(0xc5bdad))
-  blade.position.z = 0.9
+  const arms = []
+  let swordPivot
+  let offArm
+  for (const sx of [-0.92, 0.92]) {
+    const side = Math.sign(sx)
+    const arm = new THREE.Group()
+    arm.position.set(sx, 1.9, 0)
+    arm.rotation.z = side * 0.2
+    const shoulder = new THREE.Mesh(new THREE.DodecahedronGeometry(0.43, 1), emberPlateMat)
+    shoulder.scale.set(1.25, 0.86, 1.05)
+    const pauldron = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.52, 6), accentMat)
+    pauldron.position.set(side * 0.2, 0.22, -0.03)
+    pauldron.rotation.z = -side * 0.85
+    const upperArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.42, 5, 10), mat)
+    upperArm.position.y = -0.42
+    const forearm = new THREE.Group()
+    forearm.position.y = -0.76
+    forearm.rotation.z = -side * 0.25
+    const lowerArm = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.36, 5, 10), accentMat)
+    lowerArm.position.y = -0.3
+    const fist = new THREE.Mesh(new THREE.DodecahedronGeometry(side < 0 ? 0.31 : 0.37, 1), mat)
+    fist.position.y = -0.66
+    forearm.add(lowerArm, fist)
+    arm.add(shoulder, pauldron, upperArm, forearm)
+    upperBody.add(arm)
+    arms.push({ arm, forearm, side })
+    if (side < 0) swordPivot = arm
+    else offArm = arm
+  }
+  const weapon = new THREE.Group()
+  weapon.position.set(0, -1.42, 0)
+  const bladeMat = toon(0x8e8b88)
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.14, 2.5), bladeMat)
+  blade.position.z = 1.2
   blade.castShadow = true
-  swordPivot.add(blade)
-  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.12, 0.12), toon(0x8b6538))
-  swordPivot.add(guard)
-  group.add(swordPivot)
+  weapon.add(blade)
+  const bladeTip = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.45, 4), bladeMat)
+  bladeTip.position.z = 2.62
+  bladeTip.rotation.x = Math.PI / 2
+  weapon.add(bladeTip)
+  const bladeSpine = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 1.9), emberPlateMat)
+  bladeSpine.position.set(0, 0.08, 1.05)
+  weapon.add(bladeSpine)
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.16, 0.16), toon(0x8b6538))
+  weapon.add(guard)
+  swordPivot.add(weapon)
 
-  const core = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), new THREE.MeshBasicMaterial({ color: 0x7a2b18 }))
-  core.position.set(0, 1.2, 0.62)
-  group.add(core)
-  const slamRing = new THREE.Mesh(
-    new THREE.RingGeometry(3.8, 4.05, 36),
-    new THREE.MeshBasicMaterial({ color: 0xff5a24, transparent: true, opacity: 0.75, side: THREE.DoubleSide })
+  for (const [cx, length, angle] of [[-0.4, 1.55, -0.08], [0, 1.85, 0.03], [0.4, 1.45, 0.1]]) {
+    const cape = new THREE.Mesh(new THREE.BoxGeometry(0.35, length, 0.08), emberPlateMat)
+    cape.position.set(cx, 1.45 - (1.85 - length) * 0.45, -0.61)
+    cape.rotation.z = angle
+    upperBody.add(cape)
+  }
+
+  const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 1), glowMat)
+  core.position.set(0, 1.55, 0.67)
+  const coreHalo = new THREE.Mesh(
+    new THREE.SphereGeometry(0.36, 14, 10),
+    new THREE.MeshBasicMaterial({ color: 0xff5522, transparent: true, opacity: 0.16, depthWrite: false })
   )
-  slamRing.rotation.x = -Math.PI / 2
-  slamRing.position.y = 0.06
+  coreHalo.position.copy(core.position)
+  const coreLight = new THREE.PointLight(0xff5522, 0.65, 5)
+  coreLight.position.copy(core.position)
+  upperBody.add(coreHalo, core, coreLight)
+  for (const [px, py, angle] of [[-0.34, 1.8, -0.55], [0.28, 1.48, 0.45], [-0.15, 1.18, -0.25]]) {
+    const seam = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.55, 0.04), glowMat)
+    seam.position.set(px, py, 0.7)
+    seam.rotation.z = angle
+    upperBody.add(seam)
+  }
+
+  const legs = []
+  for (const sx of [-0.38, 0.38]) {
+    const side = Math.sign(sx)
+    const hip = new THREE.Group()
+    hip.position.set(sx, 1.05, 0)
+    const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.29, 0.5, 10), mat)
+    thigh.position.y = -0.25
+    const knee = new THREE.Group()
+    knee.position.y = -0.5
+    knee.rotation.x = 0.1
+    const kneePlate = new THREE.Mesh(new THREE.DodecahedronGeometry(0.27, 1), emberPlateMat)
+    const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 0.42, 10), accentMat)
+    shin.position.y = -0.22
+    const ankle = new THREE.Group()
+    ankle.position.y = -0.43
+    ankle.rotation.x = -0.1
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.24, 0.78, 2, 1, 2), mat)
+    foot.position.set(0, -0.12, 0.18)
+    ankle.add(foot)
+    knee.add(kneePlate, shin, ankle)
+    hip.add(thigh, knee)
+    group.add(hip)
+    legs.push({ hip, knee, ankle, side, phase: side > 0 ? 0 : Math.PI })
+  }
+
+  const slamRing = new THREE.Group()
+  const slamMats = [
+    new THREE.MeshBasicMaterial({ color: 0xff5522, transparent: true, opacity: 0.78, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: 0xffaa55, transparent: true, opacity: 0.58, side: THREE.DoubleSide, depthWrite: false }),
+  ]
+  for (const [inner, outer, segments, ringMat] of [[3.75, 4.05, 64, slamMats[0]], [2.8, 2.98, 48, slamMats[1]]]) {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(inner, outer, segments), ringMat)
+    ring.rotation.x = -Math.PI / 2
+    slamRing.add(ring)
+  }
+  const runeGeo = new THREE.CircleGeometry(0.14, 4)
+  for (let i = 0; i < 12; i++) {
+    const a = i * Math.PI / 6
+    const rune = new THREE.Mesh(runeGeo, slamMats[1])
+    rune.position.set(Math.cos(a) * 3.45, 0.015, Math.sin(a) * 3.45)
+    rune.rotation.x = -Math.PI / 2
+    rune.rotation.z = a
+    slamRing.add(rune)
+  }
+  slamRing.position.y = 0.12
   slamRing.visible = false
   group.add(slamRing)
+
+  const jumpShadowMat = new THREE.MeshBasicMaterial({ color: 0x090607, transparent: true, opacity: 0.3, depthWrite: false })
+  const jumpShadow = new THREE.Mesh(new THREE.CircleGeometry(0.95, 24), jumpShadowMat)
+  jumpShadow.rotation.x = -Math.PI / 2
+  jumpShadow.position.y = 0.04
+  jumpShadow.visible = false
+  group.add(jumpShadow)
+  const crackVertices = []
+  for (let i = 0; i < 14; i++) {
+    let cx = 0
+    let cz = 0
+    for (let step = 1; step <= 4; step++) {
+      const angle = i * Math.PI * 2 / 14 + Math.sin(i * 4 + step) * 0.16
+      const radius = 0.12 + step * 0.72
+      const nx = Math.cos(angle) * radius
+      const nz = Math.sin(angle) * radius
+      crackVertices.push(cx, 0.05, cz, nx, 0.05, nz)
+      cx = nx
+      cz = nz
+    }
+  }
+  const groundCracksMat = new THREE.LineBasicMaterial({ color: 0x34100c, transparent: true, opacity: 0, depthWrite: false })
+  const groundCracksGeo = new THREE.BufferGeometry()
+  groundCracksGeo.setAttribute('position', new THREE.Float32BufferAttribute(crackVertices, 3))
+  const groundCracks = new THREE.LineSegments(groundCracksGeo, groundCracksMat)
+  groundCracks.visible = false
+  group.add(groundCracks)
+  const impactBurst = new THREE.Group()
+  const impactBurstMat = new THREE.MeshBasicMaterial({ color: 0xff7a32, transparent: true, opacity: 0, depthWrite: false })
+  for (let i = 0; i < 12; i++) {
+    const a = i * Math.PI / 6
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.9, 4), impactBurstMat)
+    spike.position.set(Math.cos(a) * 0.85, 0.34, Math.sin(a) * 0.85)
+    spike.rotation.set(-Math.sin(a) * 0.55, a, Math.cos(a) * 0.55)
+    impactBurst.add(spike)
+  }
+  impactBurst.visible = false
+  group.add(impactBurst)
+  const chargeFlames = new THREE.Group()
+  for (let i = -2; i <= 2; i++) {
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.12 + Math.abs(i) * 0.02, 0.75, 5), glowMat)
+    flame.position.set(i * 0.22, 0.65 + Math.abs(i) * 0.08, -0.72)
+    flame.rotation.x = -Math.PI / 2
+    chargeFlames.add(flame)
+  }
+  chargeFlames.visible = false
+  group.add(chargeFlames)
 
   group.position.set(x, groundHeight(x, z), z)
   scene.add(group)
@@ -540,10 +713,25 @@ export function spawnAshKnight(scene, x, z, onDefeat) {
     id: nextId++,
     type: 'boss',
     group,
-    body: torso,
+    upperBody,
+    body,
     mat,
+    arms,
+    legs,
     swordPivot,
+    offArm,
+    core,
+    coreHalo,
+    coreLight,
     slamRing,
+    slamMats,
+    jumpShadow,
+    jumpShadowMat,
+    groundCracks,
+    groundCracksMat,
+    impactBurst,
+    impactBurstMat,
+    chargeFlames,
     hp: 360,
     maxHp: 360,
     state: 'idle',
@@ -551,7 +739,11 @@ export function spawnAshKnight(scene, x, z, onDefeat) {
     cooldown: 1,
     attackIndex: 0,
     attackHit: false,
+    phaseTwo: false,
+    recoveryKind: 'normal',
     chargeDir: new THREE.Vector3(),
+    slamStart: new THREE.Vector3(),
+    slamTarget: new THREE.Vector3(),
     knockback: new THREE.Vector3(),
     flashTimer: 0,
     pop: 0,
@@ -606,6 +798,8 @@ function beginBossAttack(e, to) {
   e.stateTime = 0
   e.attackHit = false
   e.chargeDir.copy(to).normalize()
+  if (e.chargeDir.lengthSq() < 0.01) e.chargeDir.set(Math.sin(e.group.rotation.y), 0, Math.cos(e.group.rotation.y))
+  e.group.rotation.y = Math.atan2(e.chargeDir.x, e.chargeDir.z)
   e.mat.emissive.setHex(0x5a1d12)
 }
 
@@ -613,88 +807,351 @@ export function bossAttackForIndex(index) {
   return ['slashWindup', 'chargeWindup', 'slamWindup'][index % 3]
 }
 
+function clampBossArena(position, radius = BOSS_ARENA_RADIUS) {
+  const fromCenter = new THREE.Vector2(position.x - 8, position.z + 87)
+  if (fromCenter.length() <= radius) return false
+  fromCenter.setLength(radius)
+  position.x = 8 + fromCenter.x
+  position.z = -87 + fromCenter.y
+  return true
+}
+
+function poseBossWalk(e, walking) {
+  const gait = elapsed * 5.2
+  e.upperBody.position.y = walking ? Math.abs(Math.sin(gait)) * 0.08 : Math.sin(elapsed * 1.5 + e.id) * 0.025
+  e.upperBody.rotation.set(walking ? 0.05 : 0, 0, 0)
+  e.legs.forEach(({ hip, knee, ankle, phase }) => {
+    const swing = walking ? Math.sin(gait + phase) : 0
+    const bend = 0.1 + (walking ? Math.max(0, -swing) * 0.5 : 0)
+    hip.rotation.x = swing * 0.38
+    knee.rotation.x = bend
+    ankle.rotation.x = -hip.rotation.x - bend
+  })
+  e.arms.forEach(({ arm, forearm, side }) => {
+    const swing = walking ? Math.sin(gait + (side > 0 ? 0 : Math.PI)) : 0
+    arm.rotation.set(walking ? -swing * 0.28 : 0, 0, side * 0.2)
+    forearm.rotation.z = -side * 0.25
+  })
+}
+
+function setBossArc(e, progress, height) {
+  e.group.position.lerpVectors(e.slamStart, e.slamTarget, progress)
+  e.group.position.y += height
+  e.slamRing.position.y = 0.12
+  e.jumpShadow.position.y = groundHeight(e.group.position.x, e.group.position.z) - e.group.position.y + 0.04
+  e.jumpShadow.scale.setScalar(1 - height / BOSS_JUMP_HEIGHT * 0.45)
+  e.jumpShadowMat.opacity = 0.3 - height / BOSS_JUMP_HEIGHT * 0.12
+}
+
+function beginBossRecovery(e, kind = 'normal') {
+  e.state = 'recover'
+  e.stateTime = 0
+  e.recoveryKind = kind
+  e.mat.emissive.setHex(0x000000)
+}
+
 function updateBoss(e, player, dt, patrolOnly) {
   e.stateTime += dt
   e.cooldown = Math.max(0, e.cooldown - dt)
-  e.group.position.y = groundHeight(e.group.position.x, e.group.position.z)
   if (patrolOnly || questState.q4 !== 1) {
-    if (!updatePatrol(e, dt, 0.65)) e.group.rotation.y += dt * 0.12
+    const walking = updatePatrol(e, dt, 0.65)
+    poseBossWalk(e, walking)
+    if (!walking) e.group.rotation.y += dt * 0.12
+    e.group.position.y = groundHeight(e.group.position.x, e.group.position.z)
     return
   }
 
   const ppos = player.group.position
   const to = ppos.clone().sub(e.group.position).setY(0)
   const dist = to.length()
-  if (dist > 0.01 && !e.state.includes('charge')) e.group.rotation.y = Math.atan2(to.x, to.z)
+  const pulse = 1 + Math.sin(elapsed * (e.phaseTwo ? 5 : 3)) * (e.phaseTwo ? 0.18 : 0.1)
+  e.core.scale.setScalar(pulse)
+  e.coreHalo.scale.setScalar(0.95 + pulse * 0.2 + (e.phaseTwo ? 0.28 : 0))
+  e.coreLight.intensity = (e.phaseTwo ? 1.2 : 0.55) + pulse * 0.16
+
+  if (!e.phaseTwo && e.hp <= e.maxHp * 0.5) {
+    e.phaseTwo = true
+    e.state = 'phaseShift'
+    e.stateTime = 0
+    e.attackHit = false
+    e.core.material.color.setHex(0xffaa44)
+    e.coreHalo.material.color.setHex(0xff7a32)
+    e.coreLight.color.setHex(0xff7a32)
+  }
 
   if (e.state === 'idle') {
-    e.swordPivot.rotation.set(0, 0, 0)
+    const walking = dist > 3.1
+    poseBossWalk(e, walking)
     e.slamRing.visible = false
-    if (dist > 3) e.group.position.addScaledVector(to.normalize(), 1.8 * dt)
+    e.jumpShadow.visible = false
+    e.groundCracks.visible = false
+    e.impactBurst.visible = false
+    e.chargeFlames.visible = false
+    if (dist > 0.01) e.group.rotation.y = Math.atan2(to.x, to.z)
+    if (walking) e.group.position.addScaledVector(to.normalize(), (e.phaseTwo ? 2.05 : 1.8) * dt)
     if (dist < 7 && e.cooldown <= 0) beginBossAttack(e, to)
+  } else if (e.state === 'phaseShift') {
+    const t = Math.min(1, e.stateTime / 1.15)
+    e.mat.emissive.setHex(0x7a2918)
+    e.slamRing.visible = true
+    e.slamRing.scale.setScalar(0.12 + t * 0.98)
+    e.slamRing.rotation.y += dt * (2 + t * 3)
+    e.slamMats[0].opacity = 0.85 * (1 - t * 0.45)
+    e.slamMats[1].opacity = 0.65 * (1 - t * 0.35)
+    e.upperBody.position.y = Math.sin(t * Math.PI) * 0.24
+    e.upperBody.rotation.set(-Math.sin(t * Math.PI) * 0.12, 0, 0)
+    e.swordPivot.rotation.set(-t * 0.8, -t * 0.65, -0.2 - t * 0.8)
+    e.offArm.rotation.set(-t * 0.35, 0, 0.2 + t * 1.15)
+    if (t >= 1) {
+      e.state = 'idle'
+      e.stateTime = 0
+      e.cooldown = 0.35
+      e.mat.emissive.setHex(0x000000)
+      e.slamRing.visible = false
+    }
   } else if (e.state === 'slashWindup') {
+    const t = Math.min(1, e.stateTime / 0.65)
     e.mat.emissive.setHex(0x5a1d12)
-    e.swordPivot.rotation.y = -1.6 * Math.min(1, e.stateTime / 0.6)
-    if (e.stateTime >= 0.6) {
+    if (dist > 0.01) e.group.rotation.y = Math.atan2(to.x, to.z)
+    e.upperBody.position.y = -t * 0.08
+    e.upperBody.rotation.set(0, t * 0.28, 0)
+    e.swordPivot.rotation.set(-t * 0.35, -t * 1.72, -0.2 - t * 0.35)
+    e.offArm.rotation.z = 0.2 + t * 0.65
+    if (t >= 1) {
       e.state = 'slash'
       e.stateTime = 0
       e.mat.emissive.setHex(0x000000)
     }
   } else if (e.state === 'slash') {
-    const t = Math.min(1, e.stateTime / 0.32)
-    e.swordPivot.rotation.y = -1.6 + t * 3.2
-    if (!e.attackHit && t > 0.35 && dist < 2.8) {
+    const t = Math.min(1, e.stateTime / 0.34)
+    e.upperBody.rotation.y = 0.28 - t * 0.56
+    e.swordPivot.rotation.set(-0.35 + Math.sin(t * Math.PI) * 0.28, -1.72 + t * 3.44, -0.55)
+    if (!e.attackHit && t > 0.3 && dist < 3.2) {
       e.attackHit = true
-      hurtPlayer(player, 32, e.group.position)
+      hurtPlayer(player, e.phaseTwo ? 38 : 34, e.group.position)
     }
     if (t >= 1) {
-      e.state = 'recover'
+      e.state = e.phaseTwo ? 'slashEcho' : 'recover'
       e.stateTime = 0
+      e.recoveryKind = 'normal'
+      e.attackHit = false
+      e.slamRing.scale.setScalar(0.18)
     }
+  } else if (e.state === 'slashEcho') {
+    const t = Math.min(1, e.stateTime / 0.52)
+    e.slamRing.visible = true
+    e.slamRing.scale.setScalar(0.18 + t * 0.78)
+    e.slamRing.rotation.y += dt * 4
+    e.slamMats[0].opacity = 0.7 * (1 - t)
+    e.slamMats[1].opacity = 0.55 * (1 - t)
+    if (!e.attackHit && t > 0.42 && dist < 3.8 && player.state !== 'highJump') {
+      e.attackHit = true
+      hurtPlayer(player, 18, e.group.position)
+    }
+    if (t >= 1) beginBossRecovery(e)
   } else if (e.state === 'chargeWindup') {
+    const t = Math.min(1, e.stateTime / 0.75)
     e.mat.emissive.setHex(0x5a1d12)
-    e.group.scale.z = 1 - Math.sin(Math.min(1, e.stateTime / 0.75) * Math.PI) * 0.18
-    if (e.stateTime >= 0.75) {
+    if (dist > 0.01) {
+      e.chargeDir.copy(to).normalize()
+      e.group.rotation.y = Math.atan2(e.chargeDir.x, e.chargeDir.z)
+    }
+    e.upperBody.position.y = -t * 0.24
+    e.upperBody.rotation.x = t * 0.24
+    e.legs.forEach(({ hip, knee, ankle }) => {
+      hip.rotation.x = -t * 0.12
+      knee.rotation.x = 0.1 + t * 0.72
+      ankle.rotation.x = -0.1 - t * 0.5
+    })
+    e.swordPivot.rotation.set(-t * 0.45, t * 0.4, -0.2 - t * 0.4)
+    e.offArm.rotation.set(-t * 0.55, 0, 0.2 + t * 0.35)
+    e.chargeFlames.visible = e.phaseTwo && t > 0.45
+    if (t >= 1) {
       e.state = 'charge'
       e.stateTime = 0
-      e.group.scale.z = 1
       e.mat.emissive.setHex(0x000000)
     }
   } else if (e.state === 'charge') {
-    e.group.position.addScaledVector(e.chargeDir, 12 * dt)
-    if (!e.attackHit && e.group.position.distanceTo(ppos) < 1.6) {
+    e.chargeFlames.visible = true
+    e.chargeFlames.scale.z = 0.8 + Math.sin(elapsed * 24) * 0.22 + (e.phaseTwo ? 0.4 : 0)
+    e.upperBody.rotation.x = 0.22
+    e.swordPivot.rotation.set(-0.45, 0.4, -0.6)
+    e.group.position.addScaledVector(e.chargeDir, (e.phaseTwo ? 13 : 11.5) * dt)
+    const hitWall = clampBossArena(e.group.position, 5.45)
+    if (!e.attackHit && e.group.position.distanceTo(ppos) < 1.75) {
       e.attackHit = true
-      hurtPlayer(player, 40, e.group.position)
-    }
-    if (e.stateTime >= 0.52) {
-      e.state = 'recover'
+      hurtPlayer(player, e.phaseTwo ? 44 : 40, e.group.position)
+      beginBossRecovery(e)
+    } else if (hitWall) {
+      e.state = 'stagger'
       e.stateTime = 0
+      e.chargeFlames.visible = false
+      player.shake = Math.max(player.shake ?? 0, 0.28)
+      e.mat.emissive.setHex(0x000000)
+    } else if (e.stateTime >= 0.68) {
+      if (e.phaseTwo) {
+        e.state = 'chargeBurst'
+        e.stateTime = 0
+        e.attackHit = false
+        e.slamRing.scale.setScalar(0.12)
+      } else beginBossRecovery(e)
+    }
+  } else if (e.state === 'chargeBurst') {
+    const t = Math.min(1, e.stateTime / 0.48)
+    e.chargeFlames.visible = false
+    e.slamRing.visible = true
+    e.slamRing.scale.setScalar(0.12 + t * 0.55)
+    e.slamRing.rotation.y += dt * 5
+    e.slamMats[0].opacity = 0.72 * (1 - t)
+    e.slamMats[1].opacity = 0.58 * (1 - t)
+    if (!e.attackHit && t > 0.38 && dist < 2.7 && player.state !== 'highJump') {
+      e.attackHit = true
+      hurtPlayer(player, 20, e.group.position)
+    }
+    if (t >= 1) beginBossRecovery(e)
+  } else if (e.state === 'stagger') {
+    const settle = Math.min(1, e.stateTime / 0.24)
+    e.upperBody.position.y = -0.34 * settle
+    e.upperBody.rotation.set(0.32 * settle, 0, Math.sin(e.stateTime * 18) * 0.025)
+    e.swordPivot.rotation.set(0.75 * settle, 0.2, -0.6)
+    e.offArm.rotation.set(-0.35 * settle, 0, 0.8)
+    e.legs.forEach(({ hip, knee, ankle }) => {
+      hip.rotation.x = -0.18 * settle
+      knee.rotation.x = 0.1 + 0.95 * settle
+      ankle.rotation.x = -0.1 - 0.55 * settle
+    })
+    if (e.stateTime >= 1.8) {
+      e.state = 'idle'
+      e.stateTime = 0
+      e.cooldown = 0.5
     }
   } else if (e.state === 'slamWindup') {
     e.mat.emissive.setHex(0x5a1d12)
-    const t = Math.min(1, e.stateTime / 0.95)
+    const t = Math.min(1, e.stateTime / 0.78)
+    if (dist > 0.01) e.group.rotation.y = Math.atan2(to.x, to.z)
     e.slamRing.visible = true
     e.slamRing.scale.setScalar(0.2 + t * 0.8)
-    e.swordPivot.rotation.x = -t * 2.4
+    e.slamRing.rotation.y += dt * (1.5 + t * 2.5)
+    e.slamMats[0].opacity = 0.25 + t * 0.58
+    e.slamMats[1].opacity = 0.15 + t * 0.5
+    e.jumpShadow.visible = true
+    e.jumpShadow.position.y = 0.04
+    e.upperBody.position.y = -t * 0.26
+    e.upperBody.rotation.x = -t * 0.12
+    e.legs.forEach(({ hip, knee, ankle }) => {
+      hip.rotation.x = -t * 0.16
+      knee.rotation.x = 0.1 + t * 0.82
+      ankle.rotation.x = -0.1 - t * 0.58
+    })
+    e.swordPivot.rotation.set(-t * 2.35, -t * 0.2, -0.2 - t * 0.85)
+    e.offArm.rotation.z = 0.2 + t * 1.25
     if (t >= 1) {
-      if (dist < 4.2) hurtPlayer(player, 40, e.group.position)
-      player.shake = 0.45
-      e.state = 'recover'
+      e.slamStart.copy(e.group.position)
+      e.slamTarget.set(ppos.x, groundHeight(ppos.x, ppos.z), ppos.z)
+      clampBossArena(e.slamTarget, 5.2)
+      e.state = 'slamLeap'
       e.stateTime = 0
-      e.slamRing.visible = false
-      e.mat.emissive.setHex(0x000000)
     }
-  } else if (e.state === 'recover' && e.stateTime >= 1.25) {
-    e.state = 'idle'
-    e.stateTime = 0
-    e.cooldown = 0.45
+  } else if (e.state === 'slamLeap') {
+    const t = Math.min(1, e.stateTime / BOSS_SLAM_LEAP)
+    const tracking = Math.min(1, dt * 3.2)
+    e.slamTarget.x = THREE.MathUtils.lerp(e.slamTarget.x, ppos.x, tracking)
+    e.slamTarget.z = THREE.MathUtils.lerp(e.slamTarget.z, ppos.z, tracking)
+    clampBossArena(e.slamTarget, 5.2)
+    e.slamTarget.y = groundHeight(e.slamTarget.x, e.slamTarget.z)
+    setBossArc(e, t * 0.65, BOSS_JUMP_HEIGHT * (1 - (1 - t) ** 3))
+    e.slamRing.visible = true
+    e.jumpShadow.visible = true
+    e.slamRing.scale.setScalar(1 + Math.sin(t * Math.PI) * 0.08)
+    e.slamRing.rotation.y += dt * 3.2
+    e.upperBody.position.y = 0.12 + Math.sin(t * Math.PI) * 0.18
+    e.upperBody.rotation.x = -0.16 * (1 - t)
+    e.legs.forEach(({ hip, knee, ankle }) => {
+      hip.rotation.x = -0.24
+      knee.rotation.x = 1.05 + Math.sin(t * Math.PI) * 0.35
+      ankle.rotation.x = -0.72
+    })
+    e.swordPivot.rotation.set(-2.35, -0.2, -1.05)
+    e.offArm.rotation.z = 1.45
+    if (t >= 1) {
+      e.state = 'slamDrop'
+      e.stateTime = 0
+    }
+  } else if (e.state === 'slamDrop') {
+    const t = Math.min(1, e.stateTime / BOSS_SLAM_DROP)
+    setBossArc(e, 0.65 + t * 0.35, BOSS_JUMP_HEIGHT * (1 - t * t))
+    e.slamRing.rotation.y += dt * 5
+    e.upperBody.position.y = 0.12 - t * 0.32
+    e.upperBody.rotation.x = t * 0.42
+    e.legs.forEach(({ hip, knee, ankle }) => {
+      hip.rotation.x = -0.24 + t * 0.14
+      knee.rotation.x = 1.12 - t * 0.5
+      ankle.rotation.x = -0.72 + t * 0.36
+    })
+    e.swordPivot.rotation.set(-2.35 + t * 2.7, -0.2, -1.05 + t * 0.5)
+    if (t >= 1) {
+      const radius = e.phaseTwo ? 4.6 : 4
+      if (Math.hypot(ppos.x - e.group.position.x, ppos.z - e.group.position.z) < radius && player.state !== 'highJump') {
+        hurtPlayer(player, e.phaseTwo ? 48 : 42, e.group.position)
+      }
+      e.attackHit = false
+      e.jumpShadow.visible = false
+      e.groundCracks.visible = true
+      e.groundCracks.scale.setScalar(0.3)
+      e.groundCracksMat.opacity = 0.95
+      e.impactBurst.visible = true
+      e.impactBurst.scale.setScalar(0.45)
+      e.impactBurstMat.opacity = 0.9
+      e.slamRing.scale.setScalar(e.phaseTwo ? 1.14 : 1)
+      player.shake = Math.max(player.shake ?? 0, 0.7)
+      beginBossRecovery(e, 'slam')
+    }
+  } else if (e.state === 'recover') {
+    const settle = Math.min(1, e.stateTime / 0.9)
+    e.chargeFlames.visible = false
+    e.upperBody.position.y = -0.2 * (1 - settle)
+    e.upperBody.rotation.set(0.38 * (1 - settle), 0, 0)
+    e.legs.forEach(({ hip, knee, ankle }) => {
+      hip.rotation.x = -0.1 * (1 - settle)
+      knee.rotation.x = 0.95 - settle * 0.85
+      ankle.rotation.x = -knee.rotation.x
+    })
+    e.swordPivot.rotation.set(0.35 * (1 - settle), 0, -0.55 + settle * 0.35)
+    e.offArm.rotation.set(-0.2 * (1 - settle), 0, 0.65 - settle * 0.45)
+    if (e.recoveryKind === 'slam') {
+      const impact = Math.min(1, e.stateTime / 0.62)
+      e.slamRing.visible = impact < 1
+      e.slamRing.scale.setScalar((e.phaseTwo ? 1.14 : 1) + impact * (e.phaseTwo ? 0.5 : 0.32))
+      e.slamMats[0].opacity = 0.8 * (1 - impact)
+      e.slamMats[1].opacity = 0.62 * (1 - impact)
+      e.impactBurst.visible = impact < 1
+      e.impactBurst.scale.setScalar(0.45 + impact * 2)
+      e.impactBurst.position.y = 0.06 + impact * 0.4
+      e.impactBurstMat.opacity = 0.9 * (1 - impact)
+      const crackGrowth = Math.min(1, e.stateTime / 0.2)
+      e.groundCracks.visible = e.stateTime < 1.05
+      e.groundCracks.scale.setScalar(0.3 + crackGrowth * 0.7)
+      e.groundCracksMat.opacity = 0.95 * (1 - THREE.MathUtils.smoothstep(e.stateTime, 0.5, 1.05))
+      if (e.phaseTwo && !e.attackHit && e.stateTime >= 0.42) {
+        e.attackHit = true
+        if (dist < 5.1 && player.state !== 'highJump') hurtPlayer(player, 20, e.group.position)
+      }
+    } else {
+      e.slamRing.visible = false
+      e.impactBurst.visible = false
+      e.groundCracks.visible = false
+    }
+    if (e.stateTime >= 1.25) {
+      e.state = 'idle'
+      e.stateTime = 0
+      e.cooldown = e.phaseTwo ? 0.35 : 0.45
+      e.recoveryKind = 'normal'
+    }
   }
 
-  const center = new THREE.Vector2(e.group.position.x - 8, e.group.position.z + 87)
-  if (center.length() > 5.6) {
-    center.setLength(5.6)
-    e.group.position.x = 8 + center.x
-    e.group.position.z = -87 + center.y
+  if (e.state !== 'slamLeap' && e.state !== 'slamDrop') {
+    clampBossArena(e.group.position)
+    e.group.position.y = groundHeight(e.group.position.x, e.group.position.z)
   }
   const contact = e.group.position.distanceTo(ppos)
   if (contact < 1.25 && contact > 0.01) ppos.addScaledVector(ppos.clone().sub(e.group.position).setY(0).normalize(), (1.25 - contact) * 0.5)
@@ -967,6 +1424,7 @@ function updateSentinel(e, player, dt, patrolOnly) {
 
 export function updateEnemies(scene, player, dt, patrolOnly = false) {
   elapsed += dt
+  respawnExpiredEnemies()
   const ppos = player.group.position
 
   for (let i = enemies.length - 1; i >= 0; i--) {
@@ -980,6 +1438,10 @@ export function updateEnemies(scene, player, dt, patrolOnly = false) {
         e.group.position.y = groundHeight(e.group.position.x, e.group.position.z) + pose.fall * 0.9
         e.swordPivot.rotation.x = pose.fall * 0.7
         e.slamRing.visible = false
+        e.jumpShadow.visible = false
+        e.groundCracks.visible = false
+        e.impactBurst.visible = false
+        e.chargeFlames.visible = false
         if (!pose.done || !e.deathSoundDone) continue
         e.onDefeat?.()
       } else {
@@ -1167,10 +1629,14 @@ function showHpBar(e) {
   e.barTex.magFilter = THREE.NearestFilter
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: e.barTex, depthTest: false, transparent: true }))
   sprite.scale.set(1.2, 1.2 * (BAR_H / BAR_W), 1)
-  sprite.position.y = e.type === 'boss' ? 3.1 : e.type === 'warden' ? 3.6 : e.type === 'sentinel' ? 3 : e.type === 'thornback' ? 1.45 : 1.2
+  sprite.position.y = e.type === 'boss' ? 3.8 : e.type === 'warden' ? 3.6 : e.type === 'sentinel' ? 3 : e.type === 'thornback' ? 1.45 : 1.2
   sprite.renderOrder = 5
   e.group.add(sprite)
   e.bar = sprite
+}
+
+function defeatTypeFor(e) {
+  return e.spawn?.questTarget ? 'slime' : e.type === 'slime' ? 'roamingSlime' : e.type ?? 'slime'
 }
 
 function applyHit(e, damage, fromPos, kb) {
@@ -1186,8 +1652,11 @@ function applyHit(e, damage, fromPos, kb) {
   if (killed) {
     e.dying = true
     e.dieTime = 0
-    if (e.spawn) e.spawn.alive = false
-    onEnemyKilled(e.spawn?.questTarget ? 'slime' : e.type === 'slime' ? 'roamingSlime' : e.type ?? 'slime')
+    if (e.spawn) {
+      e.spawn.alive = false
+      if (e.spawn.respawn) e.spawn.respawnAt = elapsed + RESPAWN_DELAY
+    }
+    onEnemyKilled(defeatTypeFor(e))
     if (e.type === 'warden' && wardenDeathHandler) wardenDeathHandler(e.group.position.clone())
     if (e.type === 'boss') {
       e.deathSoundDone = false
@@ -1247,11 +1716,9 @@ export function respawnEnemies(shrinePos) {
       enemies.splice(index, 1)
     }
     spawn.alive = false
+    spawn.respawnAt = elapsed + RESPAWN_DELAY
     if (!enemyReturnsAtShrine(spawn, shrinePos)) continue
-    spawn.alive = true
-    if (spawn.type === 'slime') createSlime(spawn)
-    else if (spawn.type === 'thornback') createThornback(spawn)
-    else if (spawn.type === 'sentinel') createDrownedSentinel(spawn)
+    reviveSpawn(spawn)
   }
 }
 
@@ -1279,6 +1746,21 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   patrol.patrolWait = 0
   if (updatePatrol(patrol, 0.016, 1) || patrol.patrolWait <= 0) throw new Error('Patrolling enemies must pause after reaching a patrol point')
   spawnSlime(scene, 20, 0)
+  if (enemies.at(-1).patrolRadius < 6) throw new Error('Slimes need a visibly wide patrol area')
+  if (defeatTypeFor(enemies.at(-1)) !== 'roamingSlime') throw new Error('Only marked well slimes may receive first-quest kill credit')
+  const timedSpawn = enemies.pop().spawn
+  timedSpawn.alive = false
+  timedSpawn.respawnAt = elapsed + RESPAWN_DELAY
+  const distantPlayer = { group: { position: new THREE.Vector3() } }
+  updateEnemies(scene, distantPlayer, RESPAWN_DELAY - 0.01, true)
+  if (enemies.length) throw new Error('Roaming enemies must stay defeated for two minutes')
+  updateEnemies(scene, distantPlayer, 0.01, true)
+  if (enemies.length !== 1 || enemies[0].spawn !== timedSpawn) throw new Error('Roaming enemies must respawn after two minutes')
+  const wellSpawn = { respawn: false, alive: false, respawnAt: elapsed, create() { throw new Error('Well slimes must never respawn') } }
+  spawnPoints.push(wellSpawn)
+  respawnExpiredEnemies()
+  spawnPoints.pop()
+  if (wellSpawn.alive) throw new Error('Well slimes must stay permanently defeated')
   const firstId = enemies[0].id
   respawnEnemies(shrine)
   if (enemies.length !== 1 || enemies[0].id === firstId) throw new Error('Shrine rest must rebuild roaming enemies at full state')
@@ -1327,6 +1809,7 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   const bossScene = new THREE.Scene()
   spawnAshKnight(bossScene, 8, -87)
   const boss = enemies.at(-1)
+  if (boss.arms.length !== 2 || boss.legs.length !== 2 || boss.slamRing.children.length !== 14 || boss.groundCracks.geometry.attributes.position.count !== 112) throw new Error('Ash Knight must use the articulated heavy Sentinel silhouette and layered impact effects')
   questState.q4 = 1
   boss.state = 'recover'
   boss.stateTime = 1.2
@@ -1334,5 +1817,30 @@ if (typeof process !== 'undefined' && import.meta.url === `file://${process.argv
   if (boss.state !== 'recover') throw new Error('Ash Knight recovery must remain punishable for 1.25 seconds')
   updateBoss(boss, { group: { position: new THREE.Vector3(15, 0, -87) } }, 0.02)
   if (boss.state !== 'idle') throw new Error('Ash Knight must resume attacking after its recovery window')
-  console.log('Enemy check passed: obstacle-aware patrols, targeted Runic Slam arc/cracks, boss cycle, respawns, and articulated locomotion.')
+  boss.hp = boss.maxHp / 2
+  updateBoss(boss, { group: { position: new THREE.Vector3(11, 0, -87) } }, 0.01)
+  if (!boss.phaseTwo || boss.state !== 'phaseShift') throw new Error('Broken Oath must begin at half health')
+  boss.state = 'slash'
+  boss.stateTime = 0.33
+  updateBoss(boss, { group: { position: new THREE.Vector3(15, 0, -87) }, state: 'move' }, 0.02)
+  if (boss.state !== 'slashEcho') throw new Error('Broken Oath must add a delayed echo to Oathbreaker Cleave')
+  boss.phaseTwo = false
+  boss.hp = boss.maxHp
+  boss.group.position.set(13.4, groundHeight(13.4, -87), -87)
+  boss.state = 'charge'
+  boss.stateTime = 0
+  boss.chargeDir.set(1, 0, 0)
+  const chargeTarget = { group: { position: new THREE.Vector3(8, 0, -87) }, state: 'move', shake: 0 }
+  updateBoss(boss, chargeTarget, 0.1)
+  if (boss.state !== 'stagger') throw new Error('A missed Furnace Rush must stagger the Ash Knight against the arena edge')
+  boss.group.position.set(8, groundHeight(8, -87), -87)
+  boss.state = 'slamDrop'
+  boss.stateTime = BOSS_SLAM_DROP - 0.01
+  boss.slamStart.copy(boss.group.position)
+  boss.slamTarget.set(10, groundHeight(10, -87), -87)
+  stats.hp = stats.hpMax
+  const jumpingPlayer = { group: { position: boss.slamTarget.clone() }, state: 'highJump', shake: 0 }
+  updateBoss(boss, jumpingPlayer, 0.02)
+  if (boss.state !== 'recover' || stats.hp !== stats.hpMax || !boss.groundCracks.visible) throw new Error('Cinderfall must crack the ground while High Jump clears its area damage')
+  console.log('Enemy check passed: patrols, respawns, articulated enemies, Runic Slam, and the upgraded Ash Knight moveset.')
 }
