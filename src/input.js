@@ -35,6 +35,7 @@ function setTouchDirection(dx, dy) {
 function bindTouchPad(pad) {
   const thumb = pad.querySelector('#touch-thumb')
   let activePointer = null
+  let centerTap = false
 
   const move = (event) => {
     if (event.pointerId !== activePointer) return
@@ -43,6 +44,7 @@ function bindTouchPad(pad) {
     const dx = event.clientX - rect.left - rect.width / 2
     const dy = event.clientY - rect.top - rect.height / 2
     const distance = Math.hypot(dx, dy)
+    if (distance >= 12) centerTap = false
     const scale = distance > 46 ? 46 / distance : 1
     thumb.style.transform = `translate3d(calc(-50% + ${dx * scale}px),calc(-50% + ${dy * scale}px),0)`
     setTouchDirection(dx, dy)
@@ -51,6 +53,7 @@ function bindTouchPad(pad) {
   pad.addEventListener('pointerdown', (event) => {
     if (activePointer !== null) return
     activePointer = event.pointerId
+    centerTap = true
     pad.setPointerCapture(event.pointerId)
     move(event)
   })
@@ -61,6 +64,11 @@ function bindTouchPad(pad) {
       activePointer = null
       setTouchDirection(0, 0)
       thumb.style.transform = ''
+      if (type === 'pointerup' && centerTap) {
+        pressInput('KeyE')
+        keys.KeyE = false
+      }
+      centerTap = false
     })
   }
   for (const type of ['selectstart', 'dragstart', 'contextmenu']) {
@@ -142,7 +150,7 @@ body.title-open #touch-pad, body.title-open #touch-actions { visibility:hidden; 
   const controls = document.createElement('div')
   controls.id = 'touch-pad'
   controls.setAttribute('role', 'group')
-  controls.setAttribute('aria-label', 'Eight-direction movement control')
+  controls.setAttribute('aria-label', 'Eight-direction movement control; tap center to interact')
   controls.innerHTML = '<span id="touch-thumb" aria-hidden="true"></span>'
   bindTouchPad(controls)
 
